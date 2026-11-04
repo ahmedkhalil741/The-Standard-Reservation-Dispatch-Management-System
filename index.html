@@ -1650,21 +1650,26 @@
       return head + `<div class="q-note">This route isn&rsquo;t on our standard rate card, so Hany
         works the price out himself and texts it to you before anything is agreed.</div>`;
     }
+    // ONE PRICE FOR THE WHOLE JOB.
+    //
+    // A round trip is one ride as of 4 November, so `q.total`, `q.cardFee` and
+    // `q.tipSuggested` already cover both legs and this panel adds nothing up.
+    // It used to sum the two legs here, which meant the page and the server
+    // each did their own arithmetic on the same booking - and an unpriced
+    // return leg could not be shown at all, because half a quote is not one.
     const rt = q.roundTrip;
-    const both = rt && rt.matched;
-    const rows = [`<div class="q-row"><span>${both ? 'Fare there' : 'Fare'}</span><b>${money(q.fare)}</b></div>`];
-    if (both) rows.push(`<div class="q-row"><span>Fare back</span><b>${money(rt.fare)}</b></div>`);
+    const both = Boolean(rt);
+    const outFare = both && rt.outboundFare !== null ? rt.outboundFare : q.fare;
+    const rows = [`<div class="q-row"><span>${both ? 'Fare there' : 'Fare'}</span><b>${money(outFare)}</b></div>`];
+    if (both && rt.returnFare !== null) rows.push(`<div class="q-row"><span>Fare back</span><b>${money(rt.returnFare)}</b></div>`);
     // Named as covering both directions, because that is the question a
     // customer asks when they see one toll line on a two-way trip.
     if (q.toll)    rows.push(`<div class="q-row"><span>Tolls <i>${both ? 'both ways, at cost' : 'at cost'}</i></span><b>${money(q.toll)}</b></div>`);
-    const fees = both ? (q.cardFee || 0) + (rt.cardFee || 0) : q.cardFee;
-    if (fees) rows.push(`<div class="q-row"><span>${q.cardFeeLabel || 'Card'} fee</span><b>${money(fees)}</b></div>`);
-    rows.push(`<div class="q-row q-total"><span>Estimated total</span><b>${money(both ? rt.bothTotal : q.total)}</b></div>`);
+    if (q.cardFee) rows.push(`<div class="q-row"><span>${q.cardFeeLabel || 'Card'} fee</span><b>${money(q.cardFee)}</b></div>`);
+    rows.push(`<div class="q-row q-total"><span>Estimated total</span><b>${money(q.total)}</b></div>`);
     return head + rows.join('') +
-      ((both ? rt.bothTip : q.tipSuggested) ? `<div class="q-note">A tip is separate and never added for you &mdash; 20% of
-        the fare is usual, about ${money(both ? rt.bothTip : q.tipSuggested)} on this trip.</div>` : '') +
-      (rt && !rt.matched ? `<div class="q-note">We price the way back by hand &mdash; Hany will
-        text you that figure before anything is agreed.</div>` : '') +
+      (q.tipSuggested ? `<div class="q-note">A tip is separate and never added for you &mdash; 20% of
+        the fare is usual, about ${money(q.tipSuggested)} on this trip${both ? ' for both ways' : ''}.</div>` : '') +
       (q.toll ? `<div class="q-note">The toll is what the road costs us and is passed straight
         through &mdash; we don&rsquo;t mark it up. It is in the total above, so there is nothing
         further to pay at the airport or the tunnel.</div>` : '') +
@@ -1999,6 +2004,11 @@
       // The same stops the estimate was worked out from, so the row that gets
       // saved and the number the customer was shown cannot disagree.
       stops: stopValues(),
+      // THE WAY BACK TRAVELS WITH THE BOOKING, and this is new - it used to be
+      // posted separately as a second booking. One ride, one row: the server
+      // prices both legs together, writes the return into its own columns, and
+      // still puts two entries on the calendar because the car turns up twice.
+      roundTrip: returnDetails(),
       source: 'Web'
     };
 
@@ -2034,38 +2044,15 @@
       quote = bookJson && bookJson.quote ? bookJson.quote : null;
     } catch (err) { quote = null; }
 
-    // ---- THE WAY BACK, SAVED SECOND AND ON PURPOSE ----
+    // ---- NO SECOND BOOKING ----
     //
-    // Two rides, not one: each leg has its own time and its own driver, and
-    // either half can be cancelled without disturbing the other.
-    //
-    // AFTER the first, never alongside it. log-booking decides the $10 first
-    // ride by reading the Bookings tab for a row carrying "First ride". Send
-    // both at once and the second reads the sheet before the first has
-    // written to it, so both qualify and the ten goes out twice.
-    //
-    // toll: 0 on the return - the toll already charged covers the car going
-    // and coming back, so billing it again would bill the same crossings
-    // twice.
+    // The return leg used to be posted again here with the ends swapped, which
+    // produced a second sheet row, a second ride card and a second Completed
+    // button for one reservation. Ahmed's instruction, 4 November: one ride in
+    // the dispatch, one ride in the sheet. It rides in `payload.roundTrip` now
+    // and the server handles it - which also retires the sequencing this block
+    // needed, because there is only one write to race against itself.
     const backLeg = returnDetails();
-    if (backLeg) {
-      const backPayload = Object.assign({}, payload, {
-        pickup: backLeg.returnPickup || payload.dropoff,
-        dropoff: backLeg.returnDropoff || payload.pickup,
-        dateTime: backLeg.returnDateTime,
-        overrides: { toll: 0 },
-        stops: [],
-        returnDateTime: undefined, returnPickup: undefined, returnDropoff: undefined,
-        notes: [payload.notes, 'Return leg of a round trip'].filter(Boolean).join(' \u00b7 '),
-      });
-      ['send-booking-notification', 'add-to-calendar', 'log-booking'].forEach((fn) => {
-        fetch('/.netlify/functions/' + fn, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(backPayload)
-        }).catch(() => {});
-      });
-    }
 
     // Save/update this customer's profile (name + preferences) so we
     // recognize them and prefill their usual info next time they book.
@@ -2076,7 +2063,7 @@
     }).catch(() => {});
 
     const lead = backLeg
-      ? `Reservation received — ${pickup} to ${dropoff}, and the ride back.`
+      ? `Reservation received — ${pickup} to ${dropoff}, and the ride back. Booked as one trip.`
       : `Reservation received — ${pickup} to ${dropoff}.`;
     const tail = selectedPay === 'Card'
       ? `Hany will text you to confirm your driver and your total. You'll tap your card in the car at the end of the trip.`

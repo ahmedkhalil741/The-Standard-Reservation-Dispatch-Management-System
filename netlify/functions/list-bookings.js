@@ -259,6 +259,20 @@ exports.handler = async function (event) {
           when: r.requested_datetime || '',
           name: r.name || '', phone: r.phone || '',
           pickup: r.pickup || '', dropoff: r.dropoff || '',
+          // ---- THE RETURN LEG, ON THE SAME CARD ----
+          //
+          // A round trip is one row as of 4 November, so the card has to show
+          // both journeys or the second one is invisible on the page the day is
+          // actually run from. Read straight out of the sheet - these columns
+          // are written by log-booking and matched by name, so a sheet that has
+          // not had them added yet simply shows nothing here.
+          roundTrip: /^(yes|y|true|1)$/i.test(String(r.round_trip || '').trim()),
+          returnWhen: r.return_datetime && r.return_datetime !== 'N/A' ? r.return_datetime : '',
+          returnPickup: r.return_pickup && r.return_pickup !== 'N/A' ? r.return_pickup : '',
+          returnDropoff: r.return_dropoff && r.return_dropoff !== 'N/A' ? r.return_dropoff : '',
+          // The addresses, which have never reached this page. The fee is
+          // already inside base_fare; this is the part a driver reads.
+          stops: r.stops && r.stops !== 'N/A' ? r.stops : '',
           vehicle: r.vehicle || r.car_type || '', passengers: r.passengers || '',
           carSeats: r.car_seats || '', flight: r.flight || '',
           temp: r.cabin_temp || '', elderly: r.elderly_assistance || '',

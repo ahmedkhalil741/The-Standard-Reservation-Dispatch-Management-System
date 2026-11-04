@@ -16,6 +16,7 @@
 // The values it knows how to fill, by header name:
 //   timestamp, requested_datetime, pickup, dropoff, name, phone,
 //   passengers, car_seats, elderly_assistance, flight, stops, cabin_temp,
+//   round_trip, return_datetime, return_pickup, return_dropoff,
 //   text_before_ride, payment_method, notes, source, zone, base_fare,
 //   card_fee, sedan, vehicle, toll, discount, discount_reason,
 //   discount_spent, tip, hourly_trip, hours, waiting_late_fee, fare_total
@@ -53,7 +54,7 @@
 // the customer's saved profile.
 
 const { google } = require('googleapis');
-const { estimateFare, pricesAsSedan } = require('./_fare-calc');
+const { estimateFare, roundTripFare, pricesAsSedan } = require('./_fare-calc');
 const { formatTimestamp, formatRequestedDateTime, phoneCell } = require('./_format');
 const { readTab, buildRow, orNA, orZero } = require('./_sheet');
 const { firstRideOff, cardOnFile, payMethodFor } = require('./_first-ride');
@@ -99,7 +100,7 @@ exports.handler = async function (event) {
     const {
       name, pickup, dropoff, dateTime, phone, email, notes, payMethod,
       passengers, carSeats, flight, temp, elderly, contact15, source, vehicle, referredBy, overrides, stops,
-      discountReason, hours,
+      discountReason, hours, roundTrip,
     } = JSON.parse(event.body);
 
     if (!pickup || !dropoff) {
@@ -115,8 +116,21 @@ exports.handler = async function (event) {
     const saved = await cardOnFile(phone, sheets);
     const payFor = payMethodFor(payMethod, saved);
 
-    const fare = estimateFare(pickup, dropoff, vehicle, dateTime, payFor,
-                              withStops(withHours(first.overrides, hours), stops));
+    // ---- ONE ROW FOR A ROUND TRIP ----
+    //
+    // Ahmed's instruction, 4 November. The return leg used to be a second POST
+    // to this same function from the page, which produced a second row, a
+    // second ride card and a second Completed button. It is one job now:
+    // roundTripFare adds the two legs, charges the toll once, charges the $10
+    // first ride once, and works the card fee out once on the pair. See the
+    // long note above roundTripFare in _fare-calc.js for what two rows got
+    // wrong - the stranded discount and the $0 return leg especially.
+    //
+    // `roundTrip` is null on an ordinary booking and roundTripFare then behaves
+    // exactly like estimateFare, so nothing about a one-way ride changes.
+    const fare = roundTripFare(pickup, dropoff, vehicle, dateTime, payFor,
+                               withStops(withHours(first.overrides, hours), stops), roundTrip);
+    const back = fare.returnLeg || null;
     const isSedan = pricesAsSedan(vehicle);
 
     // Local (range) and unmatched routes don't break down into base + SUV,
@@ -157,6 +171,18 @@ exports.handler = async function (event) {
       stops: (Array.isArray(stops) && stops.filter((x) => String(x || '').trim()).length)
         ? stops.filter((x) => String(x || '').trim()).join(' \u00b7 ')
         : NA,
+      // ---- THE RETURN LEG, ON THE SAME ROW ----
+      //
+      // Three columns and a Yes/No, so the sheet still answers "was this a
+      // round trip" with a filter rather than a text search through notes, and
+      // so the driver reads the second pickup without opening anything else.
+      // Add them to the Bookings header whenever you like - columns are matched
+      // by NAME here, so the order does not matter and a missing one is simply
+      // skipped.
+      round_trip: back ? 'Yes' : 'No',
+      return_datetime: back ? formatRequestedDateTime(back.dateTime) : NA,
+      return_pickup: back ? back.from : NA,
+      return_dropoff: back ? back.to : NA,
       cabin_temp: orNA(temp),
       text_before_ride: contact15 ? 'Yes' : 'No',
       payment_method: orNA(payMethod),
@@ -264,7 +290,10 @@ exports.handler = async function (event) {
       cardFeeLabel: fare.cardFeeLabel || null,
       total: fare.total,
       tipSuggested: fare.tipSuggested || null,
-    } : { matched: false };
+      // So the confirmation screen can say "there and back" rather than
+      // showing one number with no hint that it covers two journeys.
+      roundTrip: Boolean(back),
+    } : { matched: false, roundTrip: Boolean(back) };
 
     return { statusCode: 200, body: JSON.stringify({ success: true, quote }) };
   } catch (err) {

@@ -80,17 +80,37 @@ function activityFor(lastRide, today = new Date()) {
   return days <= ACTIVITY_DAYS ? ACTIVE : INACTIVE;
 }
 
-// What this particular completed ride earned, if anything. Called with the
-// point total AFTER the ride has been counted.
-function creditEarned(pointsAfter) {
+// What a completed ride earned, if anything — by the RANGE of points it moved
+// through rather than by where it landed.
+//
+// THE BUG THIS EXISTS TO PREVENT. A round trip is one ride and two points as
+// of 4 November (Ahmed's call: the customer was driven twice, so they get
+// credit for twice). The old test was `pointsAfter % 10 === 0`, which only ever
+// sees a total it lands exactly on. A customer on 9 points booking a round trip
+// goes 9 → 11, steps straight over ten, and would never have been given the $15
+// the ladder promises — silently, and for the rest of their time as a customer,
+// since 21, 31 and 41 miss every milestone too.
+//
+// Checking the range catches the milestone wherever inside it the jump lands.
+// A two-point move can cross at most one ten, so one answer is still enough.
+function creditEarnedAcross(pointsBefore, pointsAfter) {
+  const before = Math.max(0, parseInt(pointsBefore, 10) || 0);
+  const after = Math.max(0, parseInt(pointsAfter, 10) || 0);
+  if (after <= before) return null;
+  const milestone = Math.floor(after / LOYAL_POINTS) * LOYAL_POINTS;
   // Ride one earns nothing, because ride one was already ten dollars cheaper.
   // See FIRST_RIDE_CREDIT above.
-  if (pointsAfter > 0 && pointsAfter % LOYAL_POINTS === 0) {
-    return pointsAfter === LOYAL_POINTS
-      ? { amount: LOYALTY_CREDIT, reason: 'reached Loyal — 10 rides' }
-      : { amount: REPEAT_CREDIT, reason: `${pointsAfter} rides` };
-  }
-  return null;
+  if (milestone === 0 || milestone <= before) return null;
+  return milestone === LOYAL_POINTS
+    ? { amount: LOYALTY_CREDIT, reason: 'reached Loyal — 10 rides' }
+    : { amount: REPEAT_CREDIT, reason: `${milestone} rides` };
+}
+
+// The one-point version, kept because most rides are one ride. Identical to
+// what this function has always returned.
+function creditEarned(pointsAfter) {
+  const after = Math.max(0, parseInt(pointsAfter, 10) || 0);
+  return creditEarnedAcross(after - 1, after);
 }
 
 // What the NEXT credit is, and how many rides away. Called with the total they
@@ -180,7 +200,7 @@ module.exports = {
   STATUS_NEW, STATUS_REGULAR, STATUS_LOYAL, ACTIVE, INACTIVE,
   FIRST_RIDE_CREDIT, LOYALTY_CREDIT, REPEAT_CREDIT, REFERRAL_CREDIT,
   WIN_BACK_CREDIT, BIRTHDAY_CREDIT, WIN_BACK_WINDOW_DAYS,
-  statusFor, activityFor, creditEarned, standingLine, nextMilestone,
+  statusFor, activityFor, creditEarned, creditEarnedAcross, standingLine, nextMilestone,
   birthdayOfferedThisYear,
   daysSince, justWentQuiet, birthdayWithin,
 };

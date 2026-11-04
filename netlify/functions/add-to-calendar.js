@@ -46,7 +46,7 @@
 //      settings > External sharing options for primary calendars.
 
 const { google } = require('googleapis');
-const { estimateFare, isOvernightPickup } = require('./_fare-calc');
+const { roundTripFare, isOvernightPickup } = require('./_fare-calc');
 const { shiftLocalDateTime } = require('./_format');
 
 // The business runs out of New Providence, NJ, so every pickup time a
@@ -88,7 +88,7 @@ exports.handler = async function (event) {
   try {
     const {
       name, pickup, dropoff, dateTime, phone, notes, payMethod,
-      passengers, carSeats, flight, temp, elderly, contact15, vehicle, overrides, hours,
+      passengers, carSeats, flight, temp, elderly, contact15, vehicle, overrides, hours, roundTrip,
     } = JSON.parse(event.body);
 
     if (!pickup || !dropoff || !dateTime) {
@@ -106,7 +106,8 @@ exports.handler = async function (event) {
       return { statusCode: 400, body: JSON.stringify({ error: `Unrecognized date/time format: ${dateTime}` }) };
     }
 
-    const fare = estimateFare(pickup, dropoff, vehicle, dateTime, payMethod, withHours(overrides, hours));
+    const fare = roundTripFare(pickup, dropoff, vehicle, dateTime, payMethod, withHours(overrides, hours), roundTrip);
+    const back = fare.returnLeg || null;
 
     const descLines = [
       `Customer name: ${name || 'N/A'}`,
@@ -119,6 +120,13 @@ exports.handler = async function (event) {
       temp && temp !== 'No preference' ? `Cabin temperature: ${temp}` : null,
       `Text/call 15 min before pickup: ${contact15 ? 'Yes' : 'No'}`,
       isOvernightPickup(dateTime) ? 'Overnight pickup (12 AM–5:59 AM)' : null,
+      // ---- BOTH LEGS, ON BOTH ENTRIES ----
+      //
+      // One sheet row, but the driver still has to be in two places at two
+      // times, so the calendar gets two events - see the note by the second
+      // insert below. Each one names the other so whoever opens either entry
+      // knows the day is not finished.
+      back ? `Round trip — back at ${back.dateTime}: ${back.from} → ${back.to}` : null,
       `Notes: ${notes || 'None'}`,
       '',
       `Payment method: ${payMethod || 'N/A'}`,
@@ -133,23 +141,66 @@ exports.handler = async function (event) {
     ].filter((line) => line !== null);
 
     const calendar = await getCalendarClient();
-    const requestBody = {
-      summary: `The Standard ride for ${name || 'customer'}: ${pickup} → ${dropoff}`,
-      description: descLines.join('\n'),
-      start: { dateTime: start, timeZone: BUSINESS_TIMEZONE },
-      end: { dateTime: start, timeZone: BUSINESS_TIMEZONE },
-    };
 
-    try {
-      await calendar.events.insert({ calendarId: process.env.GOOGLE_CALENDAR_ID, requestBody });
-    } catch (zeroLengthErr) {
-      // A zero-length event is what puts a single time on the calendar, but
-      // don't lose the booking over it if Google won't take one.
-      requestBody.end = { dateTime: shiftLocalDateTime(dateTime, FALLBACK_MINUTES), timeZone: BUSINESS_TIMEZONE };
-      await calendar.events.insert({ calendarId: process.env.GOOGLE_CALENDAR_ID, requestBody });
+    // One entry, inserted zero-length so the calendar reads a single time.
+    // Retried with a length if Google refuses one, rather than losing the ride.
+    async function insertAt(when, summary, description) {
+      const at = shiftLocalDateTime(when, 0);
+      if (!at) throw new Error(`Unrecognized date/time format: ${when}`);
+      const requestBody = {
+        summary,
+        description,
+        start: { dateTime: at, timeZone: BUSINESS_TIMEZONE },
+        end: { dateTime: at, timeZone: BUSINESS_TIMEZONE },
+      };
+      try {
+        await calendar.events.insert({ calendarId: process.env.GOOGLE_CALENDAR_ID, requestBody });
+      } catch (zeroLengthErr) {
+        requestBody.end = { dateTime: shiftLocalDateTime(when, FALLBACK_MINUTES), timeZone: BUSINESS_TIMEZONE };
+        await calendar.events.insert({ calendarId: process.env.GOOGLE_CALENDAR_ID, requestBody });
+      }
     }
 
-    return { statusCode: 200, body: JSON.stringify({ success: true }) };
+    const who = name || 'customer';
+    const tag = back ? ' (round trip — out)' : '';
+    await insertAt(dateTime, `The Standard ride for ${who}: ${pickup} → ${dropoff}${tag}`,
+                   descLines.join('\n'));
+
+    // ---- TWO CALENDAR EVENTS, ONE BOOKING ----
+    //
+    // The sheet holds one row because that is the job Ahmed is looking at and
+    // charging for. The calendar holds two because the car has to turn up
+    // twice, hours apart, and a return leg with no entry is a pickup nobody is
+    // reminded about. This is the one place a round trip is still two things,
+    // and on purpose.
+    //
+    // THE FARE IS ON THE OUTBOUND ENTRY ONLY. The figure covers both legs, so
+    // printing it on the return as well invites a driver to collect it twice.
+    // The return entry says where the money is instead.
+    if (back) {
+      const backLines = [
+        `Customer name: ${name || 'N/A'}`,
+        `Customer phone: ${phone}`,
+        `Vehicle: ${vehicle || 'SUV'}`,
+        passengers ? `Passengers: ${passengers}` : null,
+        `Car seats needed: ${carSeats && carSeats !== '0' ? carSeats : 'None'}`,
+        `Elderly assistance needed: ${elderly ? 'Yes' : 'No'}`,
+        temp && temp !== 'No preference' ? `Cabin temperature: ${temp}` : null,
+        `Text/call 15 min before pickup: ${contact15 ? 'Yes' : 'No'}`,
+        isOvernightPickup(back.dateTime) ? 'Overnight pickup (12 AM–5:59 AM)' : null,
+        `THE WAY BACK of the round trip booked for ${dateTime}.`,
+        `Notes: ${notes || 'None'}`,
+        '',
+        `Payment method: ${payMethod || 'N/A'}`,
+        `Fare: already on the outbound entry — one fare covers both legs. Do not collect twice.`,
+      ].filter((line) => line !== null);
+
+      await insertAt(back.dateTime,
+                     `The Standard ride for ${who}: ${back.from} → ${back.to} (round trip — back)`,
+                     backLines.join('\n'));
+    }
+
+    return { statusCode: 200, body: JSON.stringify({ success: true, events: back ? 2 : 1 }) };
   } catch (err) {
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }

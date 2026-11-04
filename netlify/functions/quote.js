@@ -16,7 +16,7 @@
 // no email. Asking a price is not a booking and must never leave a trace
 // that looks like one - a quote that created a row would fill the dispatch
 // board with rides nobody asked for.
-const { estimateFare } = require('./_fare-calc');
+const { roundTripFare } = require('./_fare-calc');
 const { FIRST_RIDE_CREDIT } = require('./_loyalty');
 
 // Hours are an input to the price, not a correction of one - same shape the
@@ -49,28 +49,21 @@ exports.handler = async function (event) {
       ? stops.filter((x) => String(x || '').trim()).slice(0, 5)
       : [];
     const asked = withHours(firstRideOff, hours);
-    const fare = estimateFare(pickup, dropoff, vehicle, dateTime, payMethod,
-                              cleanStops.length ? Object.assign({}, asked || {}, { stops: cleanStops }) : asked);
-
-    // The way back, priced on its own merits and added. The toll is set to
-    // zero because the figure we charge already covers the car going and
-    // coming back - see the same note in quote-fare.js. The $10 first ride
-    // is not re-applied: it belongs to the booking that claimed it.
-    let back = null;
-    if (returnDateTime) {
-      const bPick = String(returnPickup || '').trim() || dropoff;
-      const bDrop = String(returnDropoff || '').trim() || pickup;
-      const r = estimateFare(bPick, bDrop, vehicle, returnDateTime, payMethod, { toll: 0 });
-      if (r && r.matched) {
-        back = {
-          matched: true, from: bPick, to: bDrop,
-          fare: r.fare, cardFee: r.cardFee || 0, total: r.total,
-          tipSuggested: r.tipSuggested || 0,
-        };
-      } else {
-        back = { matched: false };
-      }
-    }
+    // ---- ONE PRICE, BOTH WAYS ----
+    //
+    // A round trip is one ride as of 4 November, here as much as on the
+    // dispatch. roundTripFare is the only place a round trip gets totalled, and
+    // log-booking calls the same function, so the estimate on the booking page
+    // and the row that gets written cannot drift apart. The toll is charged
+    // once, the $10 first ride once, and there is one card fee on the pair
+    // instead of two fixed charges for one swipe.
+    const ret = returnDateTime
+      ? { returnDateTime, returnPickup, returnDropoff }
+      : null;
+    const fare = roundTripFare(pickup, dropoff, vehicle, dateTime, payMethod,
+                               cleanStops.length ? Object.assign({}, asked || {}, { stops: cleanStops }) : asked,
+                               ret);
+    const back = fare.returnLeg || null;
 
     // Only the figures a quote is made of. Nothing about zones, nothing about
     // how the table decides - the customer is owed their price, not ours.
@@ -91,11 +84,17 @@ exports.handler = async function (event) {
         firstRideOff: fare.discountApplied || 0,
         stops: cleanStops.length || 0,
         stopFee: fare.stopFee || 0,
-        // Null on a one-way. bothTotal is what the customer actually pays.
-        roundTrip: back ? Object.assign({}, back, back.matched ? {
-          bothTotal: Math.round((fare.total + back.total) * 100) / 100,
-          bothTip: (fare.tipSuggested || 0) + (back.tipSuggested || 0),
-        } : {}) : null,
+        // Null on a one-way. `total` and `tipSuggested` above already cover
+        // both legs - this says WHAT the return leg is, so the page can show
+        // the split without adding anything up itself.
+        roundTrip: back ? {
+          matched: true,
+          from: back.from,
+          to: back.to,
+          dateTime: back.dateTime,
+          outboundFare: fare.outboundFare ?? null,
+          returnFare: fare.returnFare ?? null,
+        } : null,
       }),
     };
   } catch (err) {

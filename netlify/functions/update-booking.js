@@ -165,8 +165,16 @@ exports.handler = async function (event) {
     }
 
     // ---- what the rate card says NOW, as an offer and not an action ----
+    //
+    // NOT OFFERED ON A ROUND TRIP, and that is deliberate. estimateFare prices
+    // ONE journey, so on a round-trip row it would offer the one-way figure -
+    // $292.76 against a job actually booked at $534.03 - and the offer is a
+    // button Ahmed can press. A tempting wrong number next to a right one is
+    // worse than no number. Change the price by hand on these, or rebook.
     let repriced = null;
+    const isRoundTrip = /^(yes|y|true|1)$/i.test(String(existing.round_trip || '').trim());
     try {
+      if (isRoundTrip) throw new Error('round trip - priced as one job, not repriced here');
       const when = next.dateTime || clean(was.dateTime);
       const quote = estimateFare(next.pickup, next.dropoff, next.vehicle || existing.vehicle || existing.car_type,
                                  when, existing.payment_method, {});

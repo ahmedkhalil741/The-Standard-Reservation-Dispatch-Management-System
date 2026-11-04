@@ -12,7 +12,7 @@
 //   FROM_EMAIL       = onboarding@resend.dev  (works immediately with no setup;
 //                       switch to a verified standardnj.com address later)
 
-const { estimateFare, isOvernightPickup } = require('./_fare-calc');
+const { roundTripFare, isOvernightPickup } = require('./_fare-calc');
 const { firstRideOff } = require('./_first-ride');
 const { formatRequestedDateTime } = require('./_format');
 
@@ -65,7 +65,7 @@ exports.handler = async function (event) {
   try {
     const {
       name, pickup, dropoff, dateTime, phone, notes, payMethod,
-      passengers, carSeats, flight, temp, elderly, contact15, vehicle, overrides, hours,
+      passengers, carSeats, flight, temp, elderly, contact15, vehicle, overrides, hours, roundTrip,
     } = JSON.parse(event.body);
 
     if (!pickup || !dropoff || !phone) {
@@ -75,8 +75,12 @@ exports.handler = async function (event) {
     // The same check log-booking makes, from the same sheet, so this email
     // and the row it is telling Ahmed about can never show two prices.
     const first = await firstRideOff(phone, overrides);
-    const fare = estimateFare(pickup, dropoff, vehicle, dateTime, payMethod,
-                              withHours(first.overrides, hours));
+    // One job, both legs. A round trip is one booking as of 4 November, and
+    // this email has to quote the figure that actually gets charged - the same
+    // function log-booking uses, for the same reason the dispatch preview does.
+    const fare = roundTripFare(pickup, dropoff, vehicle, dateTime, payMethod,
+                               withHours(first.overrides, hours), roundTrip);
+    const back = fare.returnLeg || null;
     const overnight = isOvernightPickup(dateTime);
 
     const emailBody = `
@@ -84,6 +88,7 @@ exports.handler = async function (event) {
       <p><strong>Customer name:</strong> ${name || 'N/A'}</p>
       <p><strong>Pickup:</strong> ${pickup}</p>
       <p><strong>Drop-off:</strong> ${dropoff}</p>
+      ${back ? `<p><strong>Round trip — the way back:</strong> ${formatRequestedDateTime(back.dateTime)}<br>${back.from} → ${back.to}<br><span style="color:#777;font-size:0.9em">One ride, one row in the sheet. Tolls charged once; the fare below covers both legs.</span></p>` : ''}
       <p><strong>Requested time:</strong> ${formatRequestedDateTime(dateTime)}${overnight ? ' <span style="color:#c9a227;">(overnight pickup)</span>' : ''}</p>
       <p><strong>Vehicle:</strong> ${vehicle || 'SUV'}</p>
       <p><strong>Customer phone:</strong> ${phone}</p>
@@ -113,7 +118,7 @@ exports.handler = async function (event) {
       body: JSON.stringify({
         from: process.env.FROM_EMAIL || 'onboarding@resend.dev',
         to: process.env.OWNER_EMAIL,
-        subject: `New booking: ${pickup} → ${dropoff}`,
+        subject: `New booking: ${pickup} → ${dropoff}${back ? ' (round trip)' : ''}`,
         html: emailBody,
       }),
     });

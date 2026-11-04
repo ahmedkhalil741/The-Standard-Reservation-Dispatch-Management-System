@@ -232,13 +232,24 @@ exports.handler = async function (event) {
         bookings.rows[idx])] },
     });
 
-    // ---- the point ----
-    // +1 on the way into Completed, -1 on the way out of it. Nothing else
-    // moves the total, so marking a ride Completed twice can't double-count
-    // and correcting a mistake genuinely corrects it.
+    // ---- the point, or two of them ----
+    // One on the way into Completed, one back on the way out of it. Nothing
+    // else moves the total, so marking a ride Completed twice can't
+    // double-count and correcting a mistake genuinely corrects it.
+    //
+    // A ROUND TRIP IS WORTH TWO. Ahmed's call, 4 November, when the two sheet
+    // rows became one: the customer was driven there and driven back, so the
+    // reward ladder should count both. One row, one Completed button, two
+    // points - and the reversal takes both back, which is the half that is
+    // easy to forget.
+    //
+    // creditEarnedAcross, not creditEarned, for the reason spelled out in
+    // _loyalty.js: a two-point jump can step straight over the ten that earns
+    // the $15, and the old test only ever saw the number it landed on.
     const wasCompleted = before.toLowerCase() === COMPLETED.toLowerCase();
     const nowCompleted = wanted === COMPLETED;
-    const delta = (nowCompleted ? 1 : 0) - (wasCompleted ? 1 : 0);
+    const legs = /^(yes|y|true|1)$/i.test(String(row.round_trip || '').trim()) ? 2 : 1;
+    const delta = legs * ((nowCompleted ? 1 : 0) - (wasCompleted ? 1 : 0));
 
     if (delta === 0) {
       return { statusCode: 200, body: JSON.stringify({ success: true, status: wanted, pointsChanged: false,
@@ -301,10 +312,11 @@ exports.handler = async function (event) {
     // Cancelled, then Completed again — a correction anyone might make — and
     // the customer walked away with $10 of credit for one $5 ride. Whatever
     // completing awarded, un-completing takes back.
-    const credit = nowCompleted ? L.creditEarned(points) : null;
-    // On the way OUT of Completed, `pointsBefore` is the total that earned the
-    // credit in the first place, so that is the one to reverse.
-    const reversed = !nowCompleted && wasCompleted ? L.creditEarned(pointsBefore) : null;
+    const credit = nowCompleted ? L.creditEarnedAcross(pointsBefore, points) : null;
+    // On the way OUT of Completed, the range runs the other way: from the new
+    // lower total back up to the total that earned the credit in the first
+    // place. Same milestone, same amount, reversed.
+    const reversed = !nowCompleted && wasCompleted ? L.creditEarnedAcross(points, pointsBefore) : null;
 
     // ---- SPENDING the credit ----
     //

@@ -829,8 +829,144 @@ function estimateFare(pickup, dropoff, vehicle, dateTime, payMethod, overrides) 
   return applyDiscount(base, ov.discount, payMethod, numOrNull(ov.cardFee), numOrNull(ov.tip));
 }
 
+// ---- A ROUND TRIP IS ONE RIDE ----
+//
+// Ahmed's instruction, 4 November: "when i make a new ride has round trip or
+// some one through the website i want them to be one ride in the dispatch one
+// ride in the sheet." It used to be two of everything - two sheet rows, two
+// ride cards, two Completed buttons - on the reasoning that each leg is a
+// separate journey on the road. One row is what he actually wants to look at,
+// and collapsing it fixes four things two rows got wrong:
+//
+//   * TWO CARD FEES. Each leg paid its own 15c fixed charge, so one swipe was
+//     billed 30c of fixed fee. One job, one fee.
+//   * THE DISCOUNT CAP WAS PER LEG. A $50 credit against a $35 outbound took
+//     $35 and left $15 stranded as "unused" while the return leg sat there
+//     with fare to spend it on. The credit now meets the whole job.
+//   * THE TIP WAS ROUNDED TWICE. 20% of each leg separately.
+//   * AN UNPRICED RETURN LEG CAME BACK AS $0. The old second row was priced
+//     with { toll: 0 }, and a toll override is enough to make priceRide take
+//     the agreed-fare path - which, with no agreed fare and no listed price
+//     for the town, returns a fare of ZERO and calls it matched. A round trip
+//     to a town that isn't on the rate card quietly charged for one leg. This
+//     function never overrides the toll, so `matched` stays truthful.
+//
+// WHAT IS STILL CHARGED ONCE: the toll, and the $10 first ride. `fare` is the
+// driving charge with the toll already excluded, so the two legs are simply
+// added and the toll is taken from the legs rather than from an override.
+//
+// THE TOLL IS THE LARGER OF THE TWO, not the outbound's. On the ordinary
+// there-and-back they are the same number. When the return starts somewhere
+// else - out to JFK, home from Manhattan - the job still crosses the bigger
+// crossing, and billing the smaller one would have Ahmed paying the Port
+// Authority the difference himself.
+//
+// AN AGREED FARE COVERS THE WHOLE JOB. A number typed into Agreed fare, a
+// typed-over toll or a typed-over card fee is a statement about this booking,
+// not about its first half, so the return leg is not priced and nothing is
+// added on top. Pricing leg two over an agreed number would bill twice for a
+// figure Ahmed said out loud on the phone.
+function roundTripFare(pickup, dropoff, vehicle, dateTime, payMethod, overrides, ret) {
+  const ov = (typeof overrides === 'object' && overrides !== null) ? overrides : { fare: overrides };
+  const when = ret && String(ret.returnDateTime || '').trim();
+  if (!when) return estimateFare(pickup, dropoff, vehicle, dateTime, payMethod, ov);
+
+  const bPick = String((ret && ret.returnPickup) || '').trim() || dropoff;
+  const bDrop = String((ret && ret.returnDropoff) || '').trim() || pickup;
+  const leg = { from: bPick, to: bDrop, dateTime: when };
+
+  const setFare = numOrNull(ov.fare);
+  const setToll = numOrNull(ov.toll);
+  const setCard = numOrNull(ov.cardFee);
+  const setTip = numOrNull(ov.tip);
+
+  if (setFare !== null || setToll !== null || setCard !== null) {
+    const one = estimateFare(pickup, dropoff, vehicle, dateTime, payMethod, ov);
+    return Object.assign({}, one, { roundTrip: true, returnLeg: leg });
+  }
+
+  // The outbound is priced WITHOUT the discount: the discount belongs to the
+  // job and has to be capped against both legs together, so applyDiscount puts
+  // it on at the end - exactly the shape estimateFare itself uses.
+  const out = estimateFare(pickup, dropoff, vehicle, dateTime, payMethod,
+                           Object.assign({}, ov, { discount: 0 }));
+  const back = estimateFare(bPick, bDrop, vehicle, when, payMethod, {});
+
+  // Either leg unpriced means the JOB is unpriced. A half-priced round trip is
+  // not a quote, and saying so is what matched:false is for.
+  const priced = (r) => r && r.matched && typeof r.fare === 'number' && isFinite(r.fare);
+  if (!priced(out) || !priced(back)) {
+    const which = !priced(out) ? 'the way out' : 'the way back';
+    return {
+      matched: false,
+      roundTrip: true,
+      returnLeg: leg,
+      label: null,
+      zone: (out && out.zone) || (back && back.zone) || null,
+      agreedFare: null,
+      fare: null,
+      toll: null,
+      cardFee: null,
+      rideFare: null,
+      total: null,
+      totalDisplay: null,
+      tipSuggested: null,
+      discount: 0,
+      discountApplied: 0,
+      display: `Round trip — ${which} has no listed price. Quote the pair by hand, then tell Claude the number and it gets added.`,
+      driverDisplay: 'Round trip — priced by hand.',
+    };
+  }
+
+  const money = (n) => `$${Number(n).toFixed(2).replace(/\.00$/, '')}`;
+  const driving = Math.round((out.fare + back.fare) * 100) / 100;
+  const toll = Math.max(out.toll || 0, back.toll || 0);
+  const rideFare = Math.round((driving + toll) * 100) / 100;
+  const auto = cardFeeFor(payMethod, rideFare + (setTip || 0));
+  const cardAmount = auto ? auto.amount : null;
+  const total = Math.round((rideFare + (cardAmount || 0)) * 100) / 100;
+
+  const parts = [`${money(driving)} fare, there and back`];
+  if (toll) parts.push(`${money(toll)} tolls`);
+  if (cardAmount) parts.push(`${money(cardAmount)} ${auto.label} fee`);
+  const shown = `${money(total)} flat (${parts.join(' + ')})`;
+
+  const merged = {
+    matched: true,
+    roundTrip: true,
+    returnLeg: leg,
+    outboundFare: out.fare,
+    returnFare: back.fare,
+    label: `${out.label} — round trip`,
+    zone: out.zone,
+    newYork: Boolean(out.newYork || back.newYork),
+    agreedFare: null,
+    fare: driving,
+    stops: out.stops,
+    stopFee: out.stopFee,
+    toll: toll || null,
+    tollEstimated: Boolean(toll),
+    cardFee: cardAmount,
+    cardFeeLabel: auto ? auto.label : null,
+    cardFeeRate: auto ? `${(auto.rate * 100).toFixed(1)}% + $${auto.fixed.toFixed(2)}` : null,
+    rideFare,
+    total,
+    totalDisplay: money(total),
+    tipSuggested: Math.round(driving * 0.2),
+    display: shown,
+    driverDisplay: shown,
+    discount: 0,
+    discountApplied: 0,
+    hourlyAmount: out.hourlyAmount || 0,
+    hours: out.hours || 0,
+  };
+
+  return applyDiscount(merged, ov.discount, payMethod, null, setTip);
+}
+
 module.exports = {
   estimateFare,
+  roundTripFare,
   isOvernightPickup,
   findTown,
   findDestination,

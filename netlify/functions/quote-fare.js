@@ -12,7 +12,7 @@
 // It is token-gated because it reveals the whole pricing model, which is not
 // public. Same ADMIN_TOKEN as dispatch.
 
-const { estimateFare, isOvernightPickup, HOURLY_RATE } = require('./_fare-calc');
+const { roundTripFare, isOvernightPickup, HOURLY_RATE } = require('./_fare-calc');
 const { FIRST_RIDE_CREDIT } = require('./_loyalty');
 const { firstRideAvailable } = require('./_first-ride');
 
@@ -77,32 +77,23 @@ exports.handler = async function (event) {
     const payFor = (cardOnFile && /^card$/i.test(String(payMethod || '').trim()))
       ? 'Card on file' : payMethod;
 
-    const fare = estimateFare(pickup, dropoff, vehicle, dateTime, payFor, withCredit);
-
-    // ---- THE RETURN LEG ----
+    // ---- ONE PRICE FOR THE WHOLE JOB ----
     //
-    // Ahmed's rule, 30 October: "same price for both ways if same address; if
-    // the round trip address is different just add the normal prices we have."
-    // So each leg is priced on its own merits and the two are added. Nothing
-    // clever, and nothing to explain to a customer beyond "there and back".
+    // A round trip is one ride now - Ahmed's instruction, 4 November. This used
+    // to price the two legs separately and hand the page a `bothTotal` to add
+    // up, which meant the screen and the sheet each did their own arithmetic on
+    // the same booking. They agree by construction now: roundTripFare is the
+    // one function that totals a round trip, and log-booking calls exactly the
+    // same one. That is the whole reason the preview exists.
     //
-    // THE TOLL IS CHARGED ONCE, which is his instruction too - "we already
-    // charge the customer both ways for the tolls so no need for any
-    // additional". The $29 to Manhattan has always covered the car going in
-    // and coming back out; charging it on both legs would bill the same four
-    // crossings twice. So leg two is priced with toll: 0.
-    //
-    // The $10 first ride is not re-applied either: it belongs to the first
-    // booking, and firstRideAvailable() above has already decided whether this
-    // customer still has it.
-    let back = null;
-    if (returnDateTime) {
-      const bPick = (returnPickup || '').trim() || dropoff;
-      const bDrop = (returnDropoff || '').trim() || pickup;
-      back = estimateFare(bPick, bDrop, vehicle, returnDateTime, payFor, { toll: 0 });
-      back.from = bPick;
-      back.to = bDrop;
-    }
+    // The toll once, the $10 first ride once, one card fee on the pair, and the
+    // discount capped against both legs rather than stranded on the first - see
+    // the note above roundTripFare in _fare-calc.js.
+    const ret = returnDateTime
+      ? { returnDateTime, returnPickup, returnDropoff }
+      : null;
+    const fare = roundTripFare(pickup, dropoff, vehicle, dateTime, payFor, withCredit, ret);
+    const back = fare.returnLeg || null;
 
     // The parts, so a price can be EXPLAINED on the phone rather than just
     // stated. "Seventy-five, plus thirty-five because it's the Suburban."
@@ -115,7 +106,7 @@ exports.handler = async function (event) {
       const shown = fare.fareBeforeDiscount !== undefined && fare.fareBeforeDiscount !== null
         ? fare.fareBeforeDiscount
         : fare.fare;
-      if (shown) lines.push(`$${shown} fare`);
+      if (shown) lines.push(`$${shown} fare${fare.roundTrip ? ', there and back' : ''}`);
       // Said out loud, with a minus sign, because this line is for Ahmed and
       // for the customer. The driver never sees it — see _fare-calc.js.
       if (fare.discountApplied) lines.push(`\u2212 $${fare.discountApplied} discount`);
@@ -128,22 +119,21 @@ exports.handler = async function (event) {
       body: JSON.stringify({
         ready: true,
         matched: fare.matched,
-        // Both legs, and what the pair comes to. Null on a one-way, so the
-        // page can simply test for it.
+        // WHAT THE RETURN LEG IS, NOT WHAT IT COSTS ON ITS OWN.
+        //
+        // `total` and `tip` above already cover both legs, because the job is
+        // priced as one thing. This block is here so the page can SHOW the
+        // split - "$235 out, $235 back" - without adding anything up itself.
+        // It carried a `bothTotal` until 4 November and the page summed the
+        // legs on screen; that is the arithmetic-in-two-places shape that put
+        // $290 on the dispatch and $280 in the sheet last month.
         roundTrip: back ? {
-          matched: back.matched,
+          matched: fare.matched,
           from: back.from,
           to: back.to,
-          label: back.label || null,
-          fare: back.fare,
-          cardFee: back.cardFee || 0,
-          total: back.total,
-          totalDisplay: back.totalDisplay || null,
-          tip: back.tipSuggested || 0,
-          bothTotal: (fare.total !== null && back.total !== null)
-            ? Math.round((fare.total + back.total) * 100) / 100
-            : null,
-          bothTip: (fare.tipSuggested || 0) + (back.tipSuggested || 0),
+          dateTime: back.dateTime,
+          outboundFare: fare.outboundFare ?? null,
+          returnFare: fare.returnFare ?? null,
         } : null,
         label: fare.label || null,
         zone: fare.zone || null,

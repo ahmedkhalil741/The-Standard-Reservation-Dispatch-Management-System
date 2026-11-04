@@ -87,6 +87,8 @@
   .ride.assigned{border-color:#3d5a3d}
   .ride-when{font-family:var(--mono);font-size:0.74rem;letter-spacing:0.07em;text-transform:uppercase;color:var(--accent);margin-bottom:10px}
   .ride-route{font-size:1.02rem;font-weight:500;line-height:1.45;margin-bottom:10px}
+  .ride-leg{font-size:0.86rem;line-height:1.45;color:#C9BFAE;margin:-4px 0 10px;padding-left:2px}
+  .ride-leg b{color:#E8DFCE;font-weight:600}
   .ride-route .arrow{color:var(--steel);margin:0 6px}
   .ride-meta{font-size:0.85rem;color:var(--dim);line-height:1.7;margin-bottom:14px}
   .ride-meta .tag{display:inline-block;font-family:var(--mono);font-size:0.68rem;letter-spacing:0.06em;
@@ -839,7 +841,7 @@
     }catch(e){ /* no autocomplete is worse than none of the page */ }
   }
 
-  const BUILD = '30 Oct 2026, 5:10pm';
+  const BUILD = '4 Nov 2026, round trips are one ride';
   (async function checkBuild(){
     try {
       const res = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1616,6 +1618,19 @@
              (isSettled ? ' done' : '') + '" data-i="' + i + '">' +
         '<div class="ride-when">' + esc(r.when || 'time not recorded') + statusTag + '</div>' +
         '<div class="ride-route">' + esc(r.pickup) + '<span class="arrow">&rarr;</span>' + esc(r.dropoff) + '</div>' +
+        // THE STOPS, AND THEN THE WAY BACK. Both belong directly under the
+        // route, because they are the route - a stop read off a different part
+        // of the card at 5am is a stop that gets missed, and a return leg with
+        // nothing on screen is a pickup nobody remembers.
+        (r.stops ? '<div class="ride-leg">via ' + esc(r.stops) + '</div>' : '') +
+        (r.returnWhen || r.roundTrip
+          ? '<div class="ride-leg"><b>Back</b> ' + esc(r.returnWhen || 'time not recorded') +
+            (r.returnPickup || r.returnDropoff
+              ? '<br>' + esc(r.returnPickup || r.dropoff) + '<span class="arrow">&rarr;</span>' +
+                esc(r.returnDropoff || r.pickup)
+              : '') +
+            '<br><span class="fsnote">One ride, one row. The fare below covers both ways.</span></div>'
+          : '') +
         standing +
         '<div class="ride-meta">' + tags.join('') +
           (tags.length ? '<br>' : '') +
@@ -2848,14 +2863,18 @@
           : selectedPay + ' fee';
 
         const tipLine = document.getElementById('tipLine');
-        const bothTip = (j.roundTrip && j.roundTrip.matched) ? j.roundTrip.bothTip : null;
-        if(j.matched && (bothTip || j.tip)){
-          document.getElementById('tipValue').textContent = '$' + (bothTip || j.tip);
+        // ONE TIP FOR THE JOB. The two legs used to be tipped separately and
+        // added up here; the server totals the job now, so j.tip already
+        // covers both ways and there is nothing left for this page to sum.
+        if(j.matched && j.tip){
+          document.getElementById('tipValue').textContent = '$' + j.tip;
           // Short form, Ahmed's wording: the percentage means nothing without the
           // number it was taken from, and the rest was noise.
           const tipBase = j.parts && j.parts.fare;
           document.getElementById('tipNote').textContent =
-            tipBase ? 'Suggested tip \u2014 20% of the $' + tipBase + ' fare' : 'Suggested tip';
+            tipBase ? 'Suggested tip \u2014 20% of the $' + tipBase + ' fare' +
+                      (j.roundTrip ? ', both ways' : '')
+                    : 'Suggested tip';
           tipLine.hidden = false;
         }else{
           tipLine.hidden = true;
@@ -2863,29 +2882,27 @@
 
         if(j.matched){
           amount.className = 'quote-amount';
-          // THE BIG NUMBER IS WHAT THEY PAY. On a round trip that is both legs
-          // together, because "$292.76" next to a booking that is really
-          // $534.19 is the number Ahmed would read down the phone.
+          // THE BIG NUMBER IS WHAT THEY PAY, and on a round trip that is the
+          // whole job - the server prices both legs as one ride, so there is
+          // nothing to add up here. This page used to sum the legs itself,
+          // which is how the dispatch once showed $290 for a booking the sheet
+          // recorded at $280. One function totals a fare now.
           const rt = j.roundTrip;
-          const bothKnown = rt && rt.matched && rt.bothTotal !== null;
-          amount.textContent = bothKnown
-            ? '$' + rt.bothTotal.toFixed(2).replace(/\.00$/, '')
-            : (j.total || j.display);
+          amount.textContent = j.total || j.display;
           const bits = [];
           if(j.label) bits.push(j.label);
           if(j.discount) bits.push('<span class="tip">$' + j.discount + ' came off the fare' +
             (j.discountUnused ? ' \u2014 ' + j.discountNote : '') + '</span>');
           if(rt){
-            if(bothKnown){
-              const outTotal = (rt.bothTotal - rt.total).toFixed(2).replace(/\.00$/, '');
-              bits.push('<span class="tip">Round trip \u2014 out $' + outTotal +
-                ', back $' + rt.total.toFixed(2).replace(/\.00$/, '') +
-                '. Tolls charged once, on the way out.</span>');
-              if(rt.label) bits.push('<span class="tip">Return: ' + esc(rt.label) + '</span>');
+            if(rt.matched && rt.outboundFare !== null && rt.returnFare !== null){
+              bits.push('<span class="tip">One ride, there and back \u2014 $' + rt.outboundFare +
+                ' out + $' + rt.returnFare + ' back. Tolls and the card fee charged once.</span>');
             }else{
-              bits.push('<span class="tip">Return leg is not on the rate card \u2014 ' +
-                'save this one, then add the return by hand.</span>');
+              bits.push('<span class="tip">Round trip \u2014 one of the two legs is not on the ' +
+                'rate card, so the pair is priced by hand. Put the number in Agreed fare and it ' +
+                'covers the whole job.</span>');
             }
+            bits.push('<span class="tip">Back: ' + esc(rt.from) + ' \u2192 ' + esc(rt.to) + '</span>');
           }
           detail.innerHTML = bits.join('<br>');
         }else{
@@ -3116,12 +3133,12 @@
       (p.stops && p.stops.length
         ? row('Stops', p.stops.join(' \u00b7 ') + '  (+$' + (p.stops.length * 15) + ')') : '') +
       // Said here as well as in the quote, because this panel is the last
-      // thing read before two rides get created instead of one.
+      // thing read before anything is written down.
       (p.roundTrip
         ? row('Return', prettyWhen(p.roundTrip.returnDateTime) + ' \u00b7 ' +
             (p.roundTrip.returnPickup || p.dropoff) + ' \u2192 ' +
             (p.roundTrip.returnDropoff || p.pickup) +
-            '  \u2014 saved as a second ride, tolls charged once')
+            '  \u2014 one ride, one row. Tolls charged once; two calendar entries.')
         : '') +
       row('Car', p.vehicle + (p.passengers ? ' \u00b7 ' + p.passengers + ' passenger' + (p.passengers === '1' ? '' : 's') : '')) +
       row('Car seats', seats) +
@@ -3172,40 +3189,27 @@
 
     await sendOne(pending);
 
-    // ---- THE RETURN LEG, SAVED SECOND AND ON PURPOSE ----
+    // ---- ONE SAVE, BOTH LEGS ----
     //
-    // Two rows, not one. Each leg is a separate journey with its own time,
-    // its own driver and its own Completed button, which is what actually
-    // happens on the road - and it is the only shape that lets Ahmed cancel
-    // one half without touching the other.
+    // This used to fire the whole set of endpoints a SECOND time with the legs
+    // swapped, which produced two sheet rows, two ride cards and two Completed
+    // buttons for one booking. Ahmed's instruction, 4 November: one ride in the
+    // dispatch, one ride in the sheet.
     //
-    // SEQUENTIAL, NOT PARALLEL, and that is the whole reason this is awaited.
-    // firstRideAvailable() answers by reading the Bookings tab for a row
-    // carrying "First ride". Fire both legs at once and the second reads the
-    // sheet before the first has finished writing to it, so both come back
-    // eligible and the ten goes out twice - the exact bug we had just fixed
-    // in the quote.
+    // `pending.roundTrip` rides along in the body and the server does the rest -
+    // log-booking writes one row with the return in its own columns,
+    // add-to-calendar still makes TWO entries because the car has to turn up
+    // twice, and roundTripFare charges the toll, the $10 and the card fee once.
     //
-    // Leg two carries toll: 0. The toll we charge already covers the car
-    // going and coming back; billing it on both legs would bill the same
-    // crossings twice. Ahmed's rule, 30 October.
+    // Nothing is sequential any more either. The second POST had to be awaited
+    // because firstRideAvailable() reads the Bookings tab for a row carrying
+    // "First ride", and firing both at once let each read the sheet before the
+    // other had written to it - so the ten went out twice. One write, one read,
+    // and the race is gone rather than ordered around.
     const rt = pending.roundTrip;
-    if (rt) {
-      const back = Object.assign({}, pending, {
-        pickup: rt.returnPickup || pending.dropoff,
-        dropoff: rt.returnDropoff || pending.pickup,
-        dateTime: rt.returnDateTime,
-        overrides: Object.assign({}, pending.overrides || {}, { toll: 0 }),
-        // Stops belong to the leg they were typed on.
-        stops: [],
-        roundTrip: null,
-        notes: [pending.notes, 'Return leg of a round trip'].filter(Boolean).join(' \u00b7 '),
-      });
-      await sendOne(back);
-    }
 
     msg.textContent = 'Saved \u2014 ' + pending.name + ', ' + pending.pickup + ' \u2192 ' + pending.dropoff +
-      (rt ? ' and the return on ' + prettyWhen(rt.returnDateTime) + '.' : '.');
+      (rt ? ', back ' + prettyWhen(rt.returnDateTime) + '. One ride, one row.' : '.');
     // The ride now exists; the list behind this view is out of date.
     if (typeof window.refreshRides === 'function') window.refreshRides();
     msg.style.color = 'var(--teal)';
