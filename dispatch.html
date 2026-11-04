@@ -88,6 +88,11 @@
   .ride-when{font-family:var(--mono);font-size:0.74rem;letter-spacing:0.07em;text-transform:uppercase;color:var(--accent);margin-bottom:10px}
   .ride-route{font-size:1.02rem;font-weight:500;line-height:1.45;margin-bottom:10px}
   .ride-leg{font-size:0.86rem;line-height:1.45;color:#C9BFAE;margin:-4px 0 10px;padding-left:2px}
+  .ride-id{font-family:var(--mono);font-size:0.68rem;letter-spacing:0.06em;color:#6f6a5e}
+  .ride-del{background:none;border:0;color:#6f6a5e;padding:0 0 0 6px;font:inherit;
+            font-size:0.78rem;cursor:pointer;text-decoration:underline}
+  .ride-del:hover{color:#E8998A}
+  .ride-del.armed{color:#E8998A;font-weight:600;text-decoration:none}
   .ride-leg b{color:#E8DFCE;font-weight:600}
   .ride-route .arrow{color:var(--steel);margin:0 6px}
   .ride-meta{font-size:0.85rem;color:var(--dim);line-height:1.7;margin-bottom:14px}
@@ -841,7 +846,7 @@
     }catch(e){ /* no autocomplete is worse than none of the page */ }
   }
 
-  const BUILD = '4 Nov 2026, one ride per round trip + the save reports failures';
+  const BUILD = '4 Nov 2026, every ride has an id';
   (async function checkBuild(){
     try {
       const res = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1218,7 +1223,7 @@
       try {
         const res = await fetch('/.netlify/functions/set-ride-status', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ token, rowNumber: ride.rowNumber, status: ride.rideStatus,
+          body: JSON.stringify({ token, bookingId: ride.bookingId, rowNumber: ride.rowNumber, status: ride.rideStatus,
                                  pickup: ride.pickup, dropoff: ride.dropoff,
                                  phone: ride.phone, name: ride.name, reason: reason })
         });
@@ -1305,7 +1310,7 @@
       try {
         const res = await fetch('/.netlify/functions/set-ride-status', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ token, rowNumber: ride.rowNumber, status: ride.rideStatus,
+          body: JSON.stringify({ token, bookingId: ride.bookingId, rowNumber: ride.rowNumber, status: ride.rideStatus,
                                  pickup: ride.pickup, dropoff: ride.dropoff,
                                  phone: ride.phone, name: ride.name, cardEntry: val })
         });
@@ -1433,7 +1438,48 @@
     if(!data.hasDriverColumn){
       notes.push('<div class="note">Your Bookings sheet has no <code>driver</code> column, so assignments won\'t be recorded there. Add one to the header row &mdash; anywhere you like, the code finds it by name.</div>');
     }
+    // ---- ONE TAP, ONCE, TO NAME THE OLD RIDES ----
+    //
+    // Rides booked from now on get an id as they are saved. The ones already in
+    // the sheet have none, and a ride with no id is still addressed by its
+    // position - so this note is the difference between "mostly safe" and
+    // safe. It counts down and disappears on its own.
+    if(data.withoutBookingId > 0){
+      const n = data.withoutBookingId;
+      notes.push('<div class="note"><strong>' + n + ' ride' + (n === 1 ? '' : 's') +
+        ' booked before ids existed.</strong> They are still found by their position in the ' +
+        'sheet, which is what goes wrong if a row is deleted, inserted or the tab gets sorted. ' +
+        'One tap fills them in \u2014 it only writes the <code>booking_id</code> column and ' +
+        'touches nothing else.<br><br>' +
+        '<button class="btn" id="backfillIds">Give the old rides an id</button> ' +
+        '<span class="result" id="backfillOut"></span></div>');
+    }
     document.getElementById('setupNotes').innerHTML = notes.join('');
+
+    const backfill = document.getElementById('backfillIds');
+    if(backfill){
+      backfill.addEventListener('click', async () => {
+        const out = document.getElementById('backfillOut');
+        backfill.disabled = true;
+        backfill.textContent = 'Working\u2026';
+        out.innerHTML = '';
+        try{
+          const res = await fetch('/.netlify/functions/backfill-booking-ids', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ token })
+          });
+          const j = await res.json();
+          if(!res.ok || j.error) throw new Error(j.error || ('Error ' + res.status));
+          out.innerHTML = '<span class="good">' + esc(j.note || 'Done') +
+            (j.samples && j.samples.length ? ' e.g. ' + esc(j.samples.join(', ')) : '') + '</span>';
+          setTimeout(() => load().catch(()=>{}), 1200);
+        }catch(err){
+          out.innerHTML = '<span class="bad">' + esc(err.message) + '</span>';
+          backfill.disabled = false;
+          backfill.textContent = 'Give the old rides an id';
+        }
+      });
+    }
 
     // How far ahead to look. Yesterday is always included whichever you pick,
     // because last night's late run still needs marking in the morning.
@@ -1642,6 +1688,12 @@
                  : ' &middot; <span class="fare-val">' + esc(r.fare || 'no fare') + '</span>') +
           '<button class="fare-edit">change the price</button>' +
           '<button class="det-edit">fix the details</button>' +
+          // DELETE IS FOR A ROW THAT SHOULD NOT EXIST - a double entry, a test,
+          // something typed in twice. It is not how a ride gets cancelled:
+          // Cancelled keeps the row, its reason and its fee, which is what the
+          // year-end numbers need. Said out loud on the button's second tap.
+          '<button class="ride-del">delete</button>' +
+          (r.bookingId ? '<br><span class="ride-id">' + esc(r.bookingId) + '</span>' : '') +
         '</div>' +
         '<div class="confirm-row">' +
           '<span class="lbl">Confirm with the customer</span>' +
@@ -2058,6 +2110,65 @@
       return;
     }
 
+    // ---- DELETE, ON THE SECOND TAP ----
+    //
+    // Two taps rather than a confirm() dialog. A browser dialog blocks the page
+    // and is the wrong thing to put behind a button that is pressed on a phone
+    // at 5am; arming the button says the same thing in place and can be
+    // abandoned by simply not pressing it again.
+    const del = e.target.closest('.ride-del');
+    if(del){
+      const card = del.closest('.ride');
+      const ride = data.rides[Number(card.dataset.i)];
+
+      if(del.dataset.armed !== '1'){
+        del.dataset.armed = '1';
+        del.classList.add('armed');
+        del.textContent = 'tap again to delete this row for good';
+        // Un-arms itself, so a stray tap cannot sit there waiting to be
+        // completed by an unrelated one later.
+        clearTimeout(Number(del.dataset.timer || 0));
+        del.dataset.timer = String(setTimeout(() => {
+          del.dataset.armed = '';
+          del.classList.remove('armed');
+          del.textContent = 'delete';
+        }, 5000));
+        return;
+      }
+
+      clearTimeout(Number(del.dataset.timer || 0));
+      del.disabled = true;
+      del.textContent = 'deleting\u2026';
+      try{
+        const res = await fetch('/.netlify/functions/delete-booking', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ token, bookingId: ride.bookingId, rowNumber: ride.rowNumber,
+                                 pickup: ride.pickup, dropoff: ride.dropoff })
+        });
+        const j = await res.json();
+        if(!res.ok || j.error) throw new Error(j.error || ('Error ' + res.status));
+        card.style.opacity = '0.4';
+        del.textContent = 'deleted';
+        // Everything below it has shifted up, so this page's row numbers are
+        // now wrong for every ride after this one. Re-read rather than patch.
+        setTimeout(() => load().catch(()=>{}), 700);
+      }catch(err){
+        del.disabled = false;
+        del.dataset.armed = '';
+        del.classList.remove('armed');
+        del.textContent = 'delete';
+        const meta = card.querySelector('.ride-meta');
+        if(meta){
+          const say = document.createElement('div');
+          say.className = 'fsnote';
+          say.style.color = '#E8998A';
+          say.textContent = err.message;
+          meta.appendChild(say);
+        }
+      }
+      return;
+    }
+
     const detOpen = e.target.closest('.det-edit');
     if(detOpen){
       const card = detOpen.closest('.ride');
@@ -2133,7 +2244,7 @@
       try{
         const res = await fetch('/.netlify/functions/update-booking', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ token, rowNumber: ride.rowNumber,
+          body: JSON.stringify({ token, bookingId: ride.bookingId, rowNumber: ride.rowNumber,
                                  was: { pickup: ride.pickup, dropoff: ride.dropoff, dateTime: ride.dateTime },
                                  now })
         });
@@ -2197,7 +2308,7 @@
       try{
         const res = await fetch('/.netlify/functions/update-fare', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ token, rowNumber: ride.rowNumber, pickup: ride.pickup,
+          body: JSON.stringify({ token, bookingId: ride.bookingId, rowNumber: ride.rowNumber, pickup: ride.pickup,
                                  dropoff: ride.dropoff, dateTime: ride.dateTime,
                                  baseFare, toll, cardFee, discount, discountReason })
         });
@@ -2258,7 +2369,7 @@
       try{
         const res = await fetch('/.netlify/functions/set-ride-status', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ token, rowNumber: ride.rowNumber, status: wanted,
+          body: JSON.stringify({ token, bookingId: ride.bookingId, rowNumber: ride.rowNumber, status: wanted,
                                  pickup: ride.pickup, dropoff: ride.dropoff,
                                  phone: ride.phone, name: ride.name })
         });
@@ -2393,7 +2504,7 @@
       try {
         const res = await fetch('/.netlify/functions/set-ride-status', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ token, rowNumber: ride.rowNumber, status: 'Confirmed',
+          body: JSON.stringify({ token, bookingId: ride.bookingId, rowNumber: ride.rowNumber, status: 'Confirmed',
                                  pickup: ride.pickup, dropoff: ride.dropoff,
                                  phone: ride.phone, name: ride.name })
         });

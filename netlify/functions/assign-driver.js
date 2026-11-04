@@ -23,7 +23,7 @@ const { google } = require('googleapis');
 const { findDriver } = require('./_drivers');
 const { findRideEvent } = require('./_calendar');
 const { sendEmail } = require('./_email');
-const { readTab, buildRow, rowToObject } = require('./_sheet');
+const { readTab, buildRow, rowToObject, findBookingRow } = require('./_sheet');
 const { formatRequestedDateTime, shiftLocalDateTime, easternOffsetMinutes, easternToInstant } = require('./_format');
 const { estimateFare } = require('./_fare-calc');
 
@@ -100,7 +100,7 @@ exports.handler = async function (event) {
   const steps = { sheet: 'skipped', calendar: 'skipped', email: 'skipped' };
 
   try {
-    const { token, driverKey, notify, rowNumber, fare: storedFare, when: storedWhen,
+    const { token, driverKey, notify, bookingId, rowNumber, fare: storedFare, when: storedWhen,
             toll: storedToll, cardFee: storedCardFee, tip: storedTip,
             pickup, dropoff, dateTime, name, phone, vehicle,
             passengers, carSeats, flight, temp, elderly, notes, payMethod } = JSON.parse(event.body);
@@ -217,16 +217,20 @@ exports.handler = async function (event) {
         // and a double-click on the booking form produces two identical rows
         // by itself. The driver was then written onto the wrong person's ride
         // and the page reported success in green.
-        let idx = Number.isInteger(rowNumber) && rowNumber >= 2 ? rowNumber - 2 : -1;
+        // The id settles it outright when the ride has one: a re-sorted or
+        // edited sheet cannot move a ride out from under its own id.
+        const found = findBookingRow(keys, rows, bookingId, rowNumber);
+        let idx = found ? found.idx : -1;
 
-        // Trust it, but check: if the sheet has been re-sorted since the page
-        // loaded, that number points at somebody else. Verify the row still
-        // holds this ride before writing to it.
-        if (idx >= 0 && idx < rows.length) {
+        // For a ride booked before ids existed there is only the row number,
+        // so the old guard still earns its place - if the sheet has been
+        // re-sorted since the page loaded, that number points at somebody
+        // else, so check the row still holds this ride before writing to it.
+        // Skipped when the id matched: an id is stronger evidence than two
+        // addresses, and it survives Ahmed having just corrected one of them.
+        if (idx !== -1 && found.foundBy === 'position') {
           const r = rowToObject(keys, rows[idx]);
           if (r.pickup !== pickup || r.dropoff !== dropoff) idx = -1;
-        } else {
-          idx = -1;
         }
 
         if (idx === -1) {

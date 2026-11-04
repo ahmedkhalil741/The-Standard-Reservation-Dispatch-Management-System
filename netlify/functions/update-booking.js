@@ -21,7 +21,7 @@
 // Netlify environment variables: the usual Google ones, plus ADMIN_TOKEN.
 
 const { google } = require('googleapis');
-const { readTab, buildRow, rowToObject } = require('./_sheet');
+const { readTab, buildRow, rowToObject, findBookingRow, noSuchRow } = require('./_sheet');
 const { findRideEvent } = require('./_calendar');
 const { shiftLocalDateTime, formatRequestedDateTime, phoneCell } = require('./_format');
 const { estimateFare } = require('./_fare-calc');
@@ -46,7 +46,7 @@ exports.handler = async function (event) {
 
   try {
     const body = JSON.parse(event.body || '{}');
-    const { token, rowNumber, was, now } = body;
+    const { token, bookingId, rowNumber, was, now } = body;
     if (token !== expected) return { statusCode: 401, body: JSON.stringify({ error: 'Wrong passcode.' }) };
     if (!was || !now) return { statusCode: 400, body: JSON.stringify({ error: 'Nothing to change.' }) };
 
@@ -74,10 +74,14 @@ exports.handler = async function (event) {
 
     // ---- the row, and the guard ----
     const { keys, rows, lastColumn } = await readTab(sheets, spreadsheetId, BOOKINGS_TAB);
-    const idx = Number.isInteger(rowNumber) && rowNumber >= 2 ? rowNumber - 2 : -1;
-    if (idx < 0 || idx >= rows.length) {
-      return { statusCode: 409, body: JSON.stringify({ error: 'That ride is no longer at that row — refresh and try again.' }) };
+    // The ride is found by its ID, not by the row number the page remembered -
+    // see findBookingRow in _sheet.js. A stale position can no longer send a
+    // write to a different customer's ride.
+    const found = findBookingRow(keys, rows, bookingId, rowNumber);
+    if (!found) {
+      return { statusCode: 409, body: JSON.stringify({ error: noSuchRow(bookingId) }) };
     }
+    const { idx, rowNumber: atRow } = found;
     const existing = rowToObject(keys, rows[idx]);
     // The OLD values are the guard. The page may have loaded before the sheet
     // was re-sorted, and overwriting somebody else's ride with this one's
@@ -108,7 +112,7 @@ exports.handler = async function (event) {
 
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `${BOOKINGS_TAB}!A${rowNumber}:${lastColumn}${rowNumber}`,
+      range: `${BOOKINGS_TAB}!A${atRow}:${lastColumn}${atRow}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [buildRow(keys, cells, rows[idx])] },
     });

@@ -255,6 +255,11 @@ exports.handler = async function (event) {
         const dateTime = parseRequestedDateTime(r.requested_datetime);
         return {
           rowNumber: i + 2,                 // 1 for the header, 1 because sheets count from 1
+          // THE ID IS HOW EVERY WRITE FINDS THIS RIDE. rowNumber is still sent
+          // alongside it, and still used, but only for rides booked before ids
+          // existed - those rows have an empty booking_id and nothing else to
+          // go on. See findBookingRow in _sheet.js.
+          bookingId: r.booking_id && r.booking_id !== 'N/A' ? String(r.booking_id).trim() : '',
           dateTime,
           when: r.requested_datetime || '',
           name: r.name || '', phone: r.phone || '',
@@ -397,8 +402,21 @@ exports.handler = async function (event) {
         driversFrom: driversSource,
         // Named so a blank field on a card points at a missing column instead
         // of being a mystery — the same mistake has cost hours twice already.
+        // How many rows still have no id. Drives the one-time "give the old
+        // rides an id" button, which disappears once it reaches zero.
+        withoutBookingId: keys.includes('booking_id')
+          ? rows.filter((row) => {
+              const o = rowToObject(keys, row);
+              return (o.pickup || o.dropoff) && !String(o.booking_id || '').trim();
+            }).length
+          : null,
         missingColumns: {
-          bookings: ['driver', 'ride_status', 'cancel_reason', 'card_entry', 'passengers', 'car_seats', 'elderly_assistance', 'email', 'referred_by']
+          // booking_id first: without it every write is still aimed by row
+          // position, which is the one that can hit the wrong ride. The rest
+          // are columns whose values are simply dropped when the header is
+          // absent. Adding any of them is a header-row edit and nothing else.
+          bookings: ['booking_id', 'round_trip', 'return_datetime', 'return_pickup', 'return_dropoff', 'stops',
+                     'driver', 'ride_status', 'cancel_reason', 'card_entry', 'passengers', 'car_seats', 'elderly_assistance', 'email', 'referred_by']
             .filter((k) => !keys.includes(k)),
           customers: ['email', 'completed_rides', 'lifetime_points', 'activity', 'credit_owed', 'credit_history', 'referred_by', 'birthday', 'birthday_offered', 'car_seats']
             .filter((k) => !customerColumns.map((h) => String(h).trim().toLowerCase().replace(/[\s-]+/g, '_')).includes(k)),

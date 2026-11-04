@@ -128,8 +128,59 @@ function rowToObject(keys, row = []) {
   return out;
 }
 
+// ---- FINDING A RIDE WITHOUT TRUSTING ITS POSITION ----
+//
+// Every write to the Bookings tab used to be aimed by row number: the dispatch
+// sent `rowNumber: 7` and the function wrote into row 7. That is right until
+// anything above row 7 moves - a deleted row, an inserted one, the tab sorted
+// by date - at which point an open dispatch is still holding the old numbers
+// and the write lands on SOMEBODY ELSE'S RIDE. No error, no warning. See the
+// long note in _booking-id.js for how this was found.
+//
+// So: ask for the ride by its booking id and go looking for it.
+//
+// WHEN AN ID IS GIVEN AND NOT FOUND, THIS REFUSES. It does not quietly fall
+// back to the row number, because "the id isn't there" almost always means the
+// row was deleted or the sheet was rebuilt - and writing to whatever occupies
+// that position now is the precise accident the id exists to prevent. The
+// caller gets null and tells the person to reload, which costs a tap.
+//
+// The row number is still accepted, and still used, for every ride booked
+// before ids existed. Those rows have an empty booking_id, the dispatch sends
+// no id for them, and they are addressed the old way - carefully, and with
+// the same reload warning. They age out as they are completed.
+function findBookingRow(keys, rows, bookingId, rowNumber) {
+  const wanted = String(bookingId == null ? '' : bookingId).replace(/\s+/g, '').toUpperCase();
+
+  if (wanted) {
+    const at = rows.findIndex((row) => {
+      const got = rowToObject(keys, row).booking_id;
+      return String(got == null ? '' : got).replace(/\s+/g, '').toUpperCase() === wanted;
+    });
+    if (at === -1) return null;
+    return { idx: at, rowNumber: at + 2, foundBy: 'id' };
+  }
+
+  // 2, not 1: row 1 is the header, and the rows array starts after it.
+  const n = Number(rowNumber);
+  const idx = Number.isInteger(n) && n >= 2 ? n - 2 : -1;
+  if (idx < 0 || idx >= rows.length) return null;
+  return { idx, rowNumber: n, foundBy: 'position' };
+}
+
+// What to say when findBookingRow comes back empty, so the four functions that
+// call it all say the same thing. An id that has gone is a different story from
+// a row number off the end, and the person can act on the difference.
+function noSuchRow(bookingId) {
+  return String(bookingId || '').trim()
+    ? `No ride with the id ${String(bookingId).trim()} - it may have been deleted. Reload the dispatch and try again.`
+    : 'That ride is not where the page expected it. Reload the dispatch and try again.';
+}
+
 module.exports = {
   normalizeHeader,
+  findBookingRow,
+  noSuchRow,
   columnLetter,
   orNA,
   orZero,

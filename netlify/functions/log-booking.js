@@ -15,7 +15,7 @@
 //
 // The values it knows how to fill, by header name:
 //   timestamp, requested_datetime, pickup, dropoff, name, phone,
-//   passengers, car_seats, elderly_assistance, flight, stops, cabin_temp,
+//   booking_id, passengers, car_seats, elderly_assistance, flight, stops, cabin_temp,
 //   round_trip, return_datetime, return_pickup, return_dropoff,
 //   text_before_ride, payment_method, notes, source, zone, base_fare,
 //   card_fee, sedan, vehicle, toll, discount, discount_reason,
@@ -58,6 +58,7 @@ const { estimateFare, roundTripFare, pricesAsSedan } = require('./_fare-calc');
 const { formatTimestamp, formatRequestedDateTime, phoneCell } = require('./_format');
 const { readTab, buildRow, orNA, orZero } = require('./_sheet');
 const { firstRideOff, cardOnFile, payMethodFor } = require('./_first-ride');
+const { newBookingId } = require('./_booking-id');
 
 // The tab bookings are appended to.
 const SHEET_TAB = 'Bookings';
@@ -139,6 +140,19 @@ exports.handler = async function (event) {
     const hasNumericFare = fare.matched && fare.total !== null;
 
     const cells = {
+      // ---- THE RIDE'S OWN NAME ----
+      //
+      // Written once, here, and never touched again by anything. Every write
+      // to this row afterwards finds it by this value rather than by its
+      // position in the sheet, so deleting a row, inserting one or sorting the
+      // tab can no longer send a status or a price onto somebody else's ride.
+      // The whole argument is in _booking-id.js, including why it isn't the
+      // phone number and why it isn't 1, 2, 3, 4.
+      //
+      // It is also a reference Ahmed can read down the phone - "your ride is
+      // 1104-7K2MQX" - and something to search the sheet for when a customer
+      // calls about a booking.
+      booking_id: newBookingId(),
       timestamp: formatTimestamp(new Date().toISOString()),
       requested_datetime: formatRequestedDateTime(dateTime),
       // The month the RIDE falls in, not the month it was booked in — written
@@ -295,7 +309,9 @@ exports.handler = async function (event) {
       roundTrip: Boolean(back),
     } : { matched: false, roundTrip: Boolean(back) };
 
-    return { statusCode: 200, body: JSON.stringify({ success: true, quote }) };
+    // The id goes back to whoever saved it, so the dispatch can address this
+    // ride immediately without waiting for a re-read of the sheet.
+    return { statusCode: 200, body: JSON.stringify({ success: true, quote, bookingId: cells.booking_id }) };
   } catch (err) {
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }

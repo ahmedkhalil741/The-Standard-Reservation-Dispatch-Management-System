@@ -13,7 +13,7 @@
 // Netlify environment variables: the usual Google ones, plus ADMIN_TOKEN.
 
 const { google } = require('googleapis');
-const { readTab, buildRow, rowToObject, orNA } = require('./_sheet');
+const { readTab, buildRow, rowToObject, orNA, findBookingRow, noSuchRow } = require('./_sheet');
 const { easternToday, phoneCell } = require('./_format');
 const { sendOwnerEmail } = require('./_email');
 const L = require('./_loyalty');
@@ -95,7 +95,7 @@ exports.handler = async function (event) {
   if (!expected) return { statusCode: 503, body: JSON.stringify({ error: 'ADMIN_TOKEN is not set in Netlify.' }) };
 
   try {
-    const { token, rowNumber, status, pickup, dropoff, phone, name, reason, cardEntry } = JSON.parse(event.body);
+    const { token, bookingId, rowNumber, status, pickup, dropoff, phone, name, reason, cardEntry } = JSON.parse(event.body);
     if (token !== expected) return { statusCode: 401, body: JSON.stringify({ error: 'Wrong passcode.' }) };
 
     const wanted = ALLOWED.find((s) => s.toLowerCase() === String(status || '').trim().toLowerCase());
@@ -110,10 +110,14 @@ exports.handler = async function (event) {
       return { statusCode: 200, body: JSON.stringify({ success: false, error: 'The Bookings tab has no "ride_status" column. Add one to the header row.' }) };
     }
 
-    const idx = Number.isInteger(rowNumber) && rowNumber >= 2 ? rowNumber - 2 : -1;
-    if (idx < 0 || idx >= bookings.rows.length) {
-      return { statusCode: 409, body: JSON.stringify({ error: 'That ride is no longer at that row — refresh and try again.' }) };
+    // The ride is found by its ID, not by the row number the page remembered -
+    // see findBookingRow in _sheet.js. A stale position can no longer send a
+    // write to a different customer's ride.
+    const found = findBookingRow(bookings.keys, bookings.rows, bookingId, rowNumber);
+    if (!found) {
+      return { statusCode: 409, body: JSON.stringify({ error: noSuchRow(bookingId) }) };
     }
+    const { idx, rowNumber: atRow } = found;
     const row = rowToObject(bookings.keys, bookings.rows[idx]);
     if (row.pickup !== pickup || row.dropoff !== dropoff) {
       return { statusCode: 409, body: JSON.stringify({ error: 'The sheet has changed since this page loaded — refresh and try again.' }) };
@@ -161,7 +165,7 @@ exports.handler = async function (event) {
       const cells = Object.assign({ ride_status: wanted }, sideCells);
       await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${BOOKINGS_TAB}!A${rowNumber}:${bookings.lastColumn}${rowNumber}`,
+        range: `${BOOKINGS_TAB}!A${atRow}:${bookings.lastColumn}${atRow}`,
         valueInputOption: 'USER_ENTERED',
         requestBody: { values: [buildRow(bookings.keys, cells, bookings.rows[idx])] },
       });
@@ -223,7 +227,7 @@ exports.handler = async function (event) {
 
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `${BOOKINGS_TAB}!A${rowNumber}:${bookings.lastColumn}${rowNumber}`,
+      range: `${BOOKINGS_TAB}!A${atRow}:${bookings.lastColumn}${atRow}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [buildRow(bookings.keys,
         Object.assign({ ride_status: wanted },
@@ -403,7 +407,7 @@ exports.handler = async function (event) {
       try {
         await sheets.spreadsheets.values.update({
           spreadsheetId,
-          range: `${BOOKINGS_TAB}!A${rowNumber}:${bookings.lastColumn}${rowNumber}`,
+          range: `${BOOKINGS_TAB}!A${atRow}:${bookings.lastColumn}${atRow}`,
           valueInputOption: 'USER_ENTERED',
           requestBody: {
             values: [buildRow(bookings.keys, {

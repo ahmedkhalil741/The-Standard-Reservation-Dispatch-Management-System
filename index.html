@@ -2034,6 +2034,7 @@
     // their booking: the ride is already saved by the time this resolves, and
     // if it doesn't, they get the message they used to get and nothing breaks.
     let quote = null;
+    let reference = null;
     try {
       const bookRes = await fetch('/.netlify/functions/log-booking', {
         method: 'POST',
@@ -2042,6 +2043,10 @@
       });
       const bookJson = await bookRes.json();
       quote = bookJson && bookJson.quote ? bookJson.quote : null;
+      // The ride's own reference, made when it was saved. Worth showing the
+      // customer: it is the thing to quote back in a text or on the phone, and
+      // it is what Ahmed searches the sheet for when they do.
+      reference = (bookJson && bookJson.bookingId) || null;
     } catch (err) { quote = null; }
 
     // ---- NO SECOND BOOKING ----
@@ -2068,7 +2073,9 @@
     const tail = selectedPay === 'Card'
       ? `Hany will text you to confirm your driver and your total. You'll tap your card in the car at the end of the trip.`
       : `Hany will text you to confirm your driver, your total, and ${selectedPay} payment details.`;
-    const quoteHtml = `<div class="quote-card">` + quotePanel(quote, 'Your estimate') + `</div>`;
+    const quoteHtml = `<div class="quote-card">` + quotePanel(quote, 'Your estimate') + `</div>` +
+      (reference ? `<div class="q-note" style="margin-top:10px">Your booking reference is
+        <b>${reference}</b> &mdash; quote it if you need to reach us about this trip.</div>` : '');
 
     msg.innerHTML = `${lead} ${tail}` + quoteHtml;
     msg.style.color = '#F2EDE3';
