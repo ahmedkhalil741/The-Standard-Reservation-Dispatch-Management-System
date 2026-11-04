@@ -841,7 +841,7 @@
     }catch(e){ /* no autocomplete is worse than none of the page */ }
   }
 
-  const BUILD = '4 Nov 2026, round trips are one ride';
+  const BUILD = '4 Nov 2026, one ride per round trip + the save reports failures';
   (async function checkBuild(){
     try {
       const res = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -3179,15 +3179,67 @@
     btn.disabled = true;
     btn.textContent = 'Saving\u2026';
 
-    const endpoints = ['send-booking-notification', 'add-to-calendar', 'log-booking', 'save-customer'];
-    const sendOne = (body) => Promise.all(endpoints.map(fn =>
-      fetch('/.netlify/functions/' + fn, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      }).catch(() => {})
-    ));
+    // ---- A SAVE THAT FAILED USED TO SAY "Saved" ----
+    //
+    // Every one of these four calls ended in .catch(() => {}), so a booking
+    // that never reached the sheet reported success, the form cleared, and the
+    // typing was gone. That is not a theoretical problem: four round trips
+    // went in on 4 November and three rows came out, with nothing on screen
+    // to say which one had gone missing or that anything had.
+    //
+    // So each call now answers, and a failure is named in plain words. The
+    // sheet is the one that matters - the calendar, the email and the customer
+    // profile can all be fixed afterwards, but a ride that isn't in the sheet
+    // does not exist. When the sheet write fails the form is LEFT ALONE so the
+    // booking can simply be confirmed again.
+    const endpoints = [
+      { fn: 'log-booking',               label: 'the sheet',             critical: true },
+      { fn: 'add-to-calendar',            label: 'the calendar' },
+      { fn: 'send-booking-notification',  label: 'your email' },
+      { fn: 'save-customer',              label: 'the customer profile' },
+    ];
 
-    await sendOne(pending);
+    const sendOne = async (body) => {
+      const answers = await Promise.all(endpoints.map(async (e) => {
+        try {
+          const r = await fetch('/.netlify/functions/' + e.fn, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          if (r.ok) return null;
+          let why = '';
+          // The functions answer with { error } on a failure; a proxy or a
+          // crash answers with something that isn't JSON at all, so the status
+          // is the fallback rather than an exception thrown in here.
+          try { const j = await r.json(); why = (j && j.error) || ''; } catch (parseErr) { why = ''; }
+          return Object.assign({}, e, { why: why || ('the server answered ' + r.status) });
+        } catch (netErr) {
+          return Object.assign({}, e, { why: netErr.message || 'no answer from the server' });
+        }
+      }));
+      return answers.filter(Boolean);
+    };
+
+    const failed = await sendOne(pending);
+    const sheetFailed = failed.some((f) => f.critical);
+
+    if (failed.length) {
+      msg.innerHTML = (sheetFailed
+          ? '<b>NOT SAVED.</b> The sheet refused it, so this ride does not exist yet. ' +
+            'Nothing has been cleared \u2014 press Confirm &amp; save again.'
+          : '<b>Saved to the sheet</b>, but some of the rest did not go through.') +
+        '<br>' + failed.map((f) => '\u2022 ' + f.label + ': ' + esc(f.why)).join('<br>');
+      msg.style.color = '#E8998A';
+      if (typeof window.refreshRides === 'function') window.refreshRides();
+      // The ride IS in the sheet in this branch, so the form has done its job
+      // and clearing it is right. Only a failed sheet write keeps the typing.
+      if (sheetFailed) {
+        saving = false;
+        btn.disabled = false;
+        btn.textContent = 'Confirm & save';
+        return;
+      }
+    }
 
     // ---- ONE SAVE, BOTH LEGS ----
     //
@@ -3208,11 +3260,13 @@
     // and the race is gone rather than ordered around.
     const rt = pending.roundTrip;
 
-    msg.textContent = 'Saved \u2014 ' + pending.name + ', ' + pending.pickup + ' \u2192 ' + pending.dropoff +
-      (rt ? ', back ' + prettyWhen(rt.returnDateTime) + '. One ride, one row.' : '.');
-    // The ride now exists; the list behind this view is out of date.
-    if (typeof window.refreshRides === 'function') window.refreshRides();
-    msg.style.color = 'var(--teal)';
+    if (!failed.length) {
+      msg.textContent = 'Saved \u2014 ' + pending.name + ', ' + pending.pickup + ' \u2192 ' + pending.dropoff +
+        (rt ? ', back ' + prettyWhen(rt.returnDateTime) + '. One ride, one row.' : '.');
+      msg.style.color = 'var(--teal)';
+      // The ride now exists; the list behind this view is out of date.
+      if (typeof window.refreshRides === 'function') window.refreshRides();
+    }
 
     document.getElementById('bookForm').reset();
     // reset() empties inputs but cannot remove rows that were added, so the
