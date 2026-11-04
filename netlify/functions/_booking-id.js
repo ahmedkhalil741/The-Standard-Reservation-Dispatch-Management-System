@@ -73,9 +73,16 @@ function easternMonthDay(now) {
   return get('month') + get('day');
 }
 
+// THE FIRST CHARACTER IS ALWAYS A LETTER, so an id can never come out as
+// nothing but digits and a hyphen. "1104-849793" is a string a spreadsheet can
+// have opinions about - a date parse, or arithmetic - and an id that a sheet
+// might rewrite is not an id. One letter in a known position removes the whole
+// question, and costs 20 of the 26 characters at one position only.
+const LETTERS = ALPHABET.replace(/[0-9]/g, '');
+
 function randomPart(length) {
-  let out = '';
-  for (let i = 0; i < length; i += 1) {
+  let out = LETTERS[Math.floor(Math.random() * LETTERS.length)];
+  for (let i = 1; i < length; i += 1) {
     out += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
   }
   return out;

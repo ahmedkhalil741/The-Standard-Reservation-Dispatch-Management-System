@@ -112,10 +112,63 @@ async function readTab(sheets, spreadsheetId, tab) {
 // column the caller doesn't manage — hand-typed notes, likes, dislikes, a
 // status column someone keeps by hand — survives the write untouched. Only
 // keys present in `cells` are overwritten.
+// ---- COLUMNS THAT MUST STAY TEXT, ON EVERY WRITE ----
+//
+// Ahmed, 4 November: "the ride month always goes in the left and has ' in the
+// beginning so i always delete it... same thing for the phone number."
+//
+// The apostrophe is deliberate and it is doing real work. "2026-10" looks like
+// a date to Google Sheets and gets stored as the serial number 46296;
+// "9084949256" is a number and renders as 9.08E+09. A leading apostrophe
+// forces the cell to stay text. Sheets eats the apostrophe itself, so it shows
+// in the formula bar and not in the cell.
+//
+// THE BUG THIS FIXES, which is why he saw it coming back. log-booking writes
+// the apostrophe, but it is not the only thing that writes these rows. Marking
+// a ride Completed, changing its price or fixing its details all rewrite the
+// WHOLE row through buildRow, carrying every column they do not manage
+// straight through. Those values were read back with values.get, which returns
+// the DISPLAYED text - "2026-10", with no apostrophe, because Sheets had
+// already consumed it - and writing that back with USER_ENTERED parses it
+// afresh. So the guard was applied once at booking and then thrown away by the
+// first status change, which is exactly the "happens frequently" he described.
+//
+// So the guard is re-applied here, on the way out, for every write in the
+// codebase rather than in the one function that remembered.
+//
+// Money columns are deliberately absent: a column that mixes text and numbers
+// stops being numeric and every average and chart over it goes quietly wrong.
+// See orZero.
+const TEXT_COLUMNS = new Set([
+  // "2026-10" -> the date serial 46296
+  'ride_month',
+  // ten digits -> 9.08E+09
+  'phone',
+  // "03-14" -> 14 March of the current year
+  'birthday',
+  // the random half can come out all digits, and "1104-849793" is one date
+  // parse away from being something else entirely
+  'booking_id',
+  // these carry a readable date; they are text today because of the separator
+  // in them, which is a thing a later edit to the format could take away
+  'timestamp', 'requested_datetime', 'return_datetime',
+]);
+
+// Already protected, or nothing to protect: leave it exactly as it is. Writing
+// a second apostrophe would put a real one in the cell.
+function asText(value) {
+  if (typeof value !== 'string') return value;
+  if (!value || value.charAt(0) === "'") return value;
+  return "'" + value;
+}
+
+// Builds a row laid out to match `keys`.
 function buildRow(keys, cells, existingRow = []) {
   return keys.map((key, i) => {
-    if (Object.prototype.hasOwnProperty.call(cells, key)) return cells[key];
-    return existingRow[i] !== undefined ? existingRow[i] : '';
+    const value = Object.prototype.hasOwnProperty.call(cells, key)
+      ? cells[key]
+      : (existingRow[i] !== undefined ? existingRow[i] : '');
+    return TEXT_COLUMNS.has(key) ? asText(value) : value;
   });
 }
 
@@ -179,6 +232,8 @@ function noSuchRow(bookingId) {
 
 module.exports = {
   normalizeHeader,
+  TEXT_COLUMNS,
+  asText,
   findBookingRow,
   noSuchRow,
   columnLetter,
