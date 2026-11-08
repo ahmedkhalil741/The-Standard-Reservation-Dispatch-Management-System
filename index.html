@@ -276,7 +276,12 @@
 
   /* FLEET */
   .fleet{padding:64px 0; border-bottom:1px solid var(--line);}
-  .fleet-grid{display:grid; grid-template-columns:1fr; gap:48px; align-items:center; max-width:760px;}
+  .fleet-grid{display:grid; grid-template-columns:1fr; gap:48px; align-items:center; max-width:980px;}
+  /* Two columns only when there is room for both. Below this the photo stacks
+     above the words, which is the right order - a face, then who he is. */
+  @media (min-width:860px){
+    .fleet-grid{grid-template-columns:minmax(260px,340px) 1fr;}
+  }
   .fleet-visual{
     background:var(--bg-raised); border:1px solid var(--line); border-radius:var(--radius);
     aspect-ratio:3/4; max-width:450px; margin:0 auto; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden;
@@ -1090,6 +1095,28 @@
 
 <section class="fleet" id="hany">
   <div class="wrap fleet-grid">
+    <!-- HANY'S PORTRAIT, BACK ON THE PAGE - 8 November, Ahmed's call.
+         
+         It came off on 8 October (commit 61a7d35) because the Open Graph, the
+         Twitter card and the LocalBusiness schema ALL pointed at this same
+         file, so his face was the picture served to Google and to anyone who
+         pasted a link into a message. That is the part he did not want, and it
+         is still fixed: every one of those three now points at cover.png, the
+         logo lockup, and they stay that way.
+         
+         What is back is the photo ON the page, where a visitor who has already
+         arrived can see who is going to drive them. That was always the point
+         of this section, and a founder's story with no face is a weaker version
+         of it.
+         
+         So: on the page yes, in the share preview no. If anyone ever changes
+         og:image, twitter:image or the schema image back to this file, they
+         have undone the thing Ahmed actually asked for. -->
+    <div class="fleet-visual">
+      <span class="fleet-tag">Founder</span>
+      <img src="hany.jpg" alt="Hany Khalil, founder of The Standard Private Car Service"
+           width="768" height="1024" loading="lazy" decoding="async">
+    </div>
     <div class="fleet-info">
       <div class="eyebrow">Meet Hany</div>
       <h2>24+ years serving our community</h2>
