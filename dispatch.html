@@ -846,7 +846,7 @@
     }catch(e){ /* no autocomplete is worse than none of the page */ }
   }
 
-  const BUILD = '4 Nov 2026, every ride has an id';
+  const BUILD = '8 Nov 2026, hourly is $85 Suburban / $75 Tesla';
   (async function checkBuild(){
     try {
       const res = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -2872,7 +2872,8 @@
   }
 
   // Blank means a normal A-to-B ride. Any positive number switches the whole
-  // price over to $60/hr — see _fare-calc.js.
+  // price over to the hourly rate for whichever car is selected — $85 for the
+  // Suburban or the Escalade, $75 for the Tesla. See _fare-calc.js.
   function hoursValue(){
     const v = parseFloat((document.getElementById('a-hours').value || '').trim());
     return isFinite(v) && v > 0 ? v : null;
@@ -3258,7 +3259,12 @@
       row('Cabin', p.temp && p.temp !== 'No preference' ? p.temp : '') +
       row('Text 15 min before', yes(p.contact15)) +
       row('Notes', p.notes) +
-      row('Hourly', p.hours ? p.hours + ' hour' + (p.hours === 1 ? '' : 's') + ' at $60/hr' : '') +
+      // The rate comes back from the server with the quote rather than being
+      // written here, so this panel can never show a figure the sheet
+      // disagrees with. $85 is the fallback if the quote did not come through,
+      // because the Suburban is the car most of these jobs take.
+      row('Hourly', p.hours ? p.hours + ' hour' + (p.hours === 1 ? '' : 's') +
+          ' at $' + ((fare && fare.hourlyRate) || 85) + '/hr' : '') +
       row('Paying by', p.payMethod) +
       (fare && fare.discount ? row('Discount', '\u2212 $' + fare.discount +
         (p.discountReason ? ' \u00b7 ' + p.discountReason : '')) : '') +

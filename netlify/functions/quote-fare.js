@@ -12,7 +12,7 @@
 // It is token-gated because it reveals the whole pricing model, which is not
 // public. Same ADMIN_TOKEN as dispatch.
 
-const { roundTripFare, isOvernightPickup, HOURLY_RATE } = require('./_fare-calc');
+const { roundTripFare, isOvernightPickup, hourlyRateFor } = require('./_fare-calc');
 const { FIRST_RIDE_CREDIT } = require('./_loyalty');
 const { firstRideAvailable } = require('./_first-ride');
 
@@ -162,7 +162,10 @@ exports.handler = async function (event) {
           cardFee: fare.cardFee || 0,
         },
         overnight: isOvernightPickup(dateTime),
-        hourlyRate: HOURLY_RATE,
+        // The rate for the car actually chosen - $85 Suburban or Escalade,
+        // $75 Tesla. Sent so the dispatch never has a figure of its own to
+        // fall out of step with.
+        hourlyRate: hourlyRateFor(vehicle),
       }),
     };
   } catch (err) {

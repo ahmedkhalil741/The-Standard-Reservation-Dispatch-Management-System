@@ -92,9 +92,39 @@ const TOLLS = {
 const LOCAL_TOLL = 0;
 
 // For work that isn't A to B — a night out, waiting between stops, errands.
-// Ahmed's decision (2026-09-17): $60/hr, and no minimum. He'd rather take a
-// short job than turn someone away over a two-hour floor.
-const HOURLY_RATE = 60;
+//
+// NO MINIMUM, which is Ahmed's decision from 2026-09-17 and the thing that
+// actually wins these jobs. Summit Express, three streets away, charges $55 an
+// hour but will not take the booking under FIVE HOURS - so a one-hour job is
+// $275 from them and $85 from us. Nobody else local will take the short ones.
+//
+// THE RATES WENT UP ON 8 NOVEMBER, from a flat $60, after reading what the
+// competition actually publishes. Summit Elite Class lists $95/hr for an SUV
+// and $80 for a sedan, and theirs is before tolls, fees AND gratuity - ours has
+// the tolls inside it. At $60 we were charging about half the going rate for
+// the one kind of work that costs a whole day.
+//
+// Ahmed's call: $85 for the Suburban or the Escalade, $75 for the Tesla. Still
+// under Summit Elite on both, still no minimum, still tolls included.
+//
+// The airport card was deliberately NOT touched. Those prices are printed on
+// cards and flyers already handed out, and airport work is where customers
+// genuinely shop on price. Hourly is neither - it lives in this file and on one
+// line of the website, and somebody booking a car for a day is choosing on
+// trust and availability, not on five dollars an hour.
+const HOURLY_RATE_SUV = 85;
+const HOURLY_RATE_SEDAN = 75;
+
+// Split on the SAME test the rate card uses, so there is one idea of what
+// counts as a sedan rather than two that can drift apart. SEDAN_CARS covers
+// the Tesla, which is why the Tesla gets $75.
+function hourlyRateFor(vehicle) {
+  return pricesAsSedan(vehicle) ? HOURLY_RATE_SEDAN : HOURLY_RATE_SUV;
+}
+
+// Kept so nothing that still imports it breaks. It is the SUV rate, which is
+// the one to quote when the car is not yet known.
+const HOURLY_RATE = HOURLY_RATE_SUV;
 
 // ---- A STOP ON THE WAY ----
 //
@@ -506,13 +536,22 @@ function agreedResult(agreed, toll, payMethod, label, setCard, zone, tip) {
 // is still accepted and means { fare }.
 // A job charged BY THE HOUR rather than A to B. It is priced before the route
 // is even looked at, because the route is not what is being sold: an evening
-// held open, several stops, a driver waiting. $60 an hour, no minimum, same
-// either car.
+// held open, several stops, a driver waiting. No minimum, and the rate now
+// depends on the car - see HOURLY_RATE_SUV above.
+//
+// ONE THING THIS DOES NOT HANDLE, and it has to be said out loud on the phone:
+// a job that ENDS somewhere far away. The hourly rate assumes the car comes
+// back. Hold the car all day and finish in Philadelphia and there are two hours
+// of driving home with nobody paying for it - which is the whole reason the
+// Philadelphia flat fare is $300 rather than four hours of hourly. On those,
+// run the clock from leaving New Providence to getting back to New Providence,
+// and put it in as an agreed fare rather than through this function.
 //
 // The tolls still apply if one end is New York — the bridge does not care how
 // the fare was worked out — so the destination is still read, only for that.
-function hourlyResult(hours, dest, payMethod, setCard, tip) {
-  const driving = Math.round(HOURLY_RATE * hours * 100) / 100;
+function hourlyResult(hours, dest, payMethod, setCard, tip, rate) {
+  const hourly = rate || HOURLY_RATE_SUV;
+  const driving = Math.round(hourly * hours * 100) / 100;
   const toll = dest ? ((TOLLS[dest.key] || {}).standard || 0) : 0;
   const rideFare = driving + toll;
   const auto = cardFeeFor(payMethod, rideFare + (tip || 0));
@@ -525,7 +564,7 @@ function hourlyResult(hours, dest, payMethod, setCard, tip) {
   if (cardAmount) bits.push(`${money(cardAmount)} ${auto ? auto.label : 'card'} fee`);
   const shown = `${money(total)} flat (${bits.join(' + ')})`;
 
-  const hoursLabel = `${hours} hour${hours === 1 ? '' : 's'} at $${HOURLY_RATE}/hr`;
+  const hoursLabel = `${hours} hour${hours === 1 ? '' : 's'} at $${hourly}/hr`;
 
   return {
     matched: true,
@@ -587,7 +626,8 @@ function priceRide(pickup, dropoff, vehicle, dateTime, payMethod, overrides) {
   // buying a trip to an airport even if the airport is one of the stops.
   const hours = numOrNull(ov.hours);
   if (hours && hours > 0 && setFare === null) {
-    return hourlyResult(hours, destAtDropoff || destAtPickup, payMethod, setCard, setTip);
+    return hourlyResult(hours, destAtDropoff || destAtPickup, payMethod, setCard, setTip,
+                        hourlyRateFor(vehicle));
   }
 
   // Exactly one end should be an airport or Manhattan. Both ends being
@@ -730,7 +770,7 @@ function priceRide(pickup, dropoff, vehicle, dateTime, payMethod, overrides) {
 
   if (anySet) return agreedResult(agreed !== null ? agreed : 0, setToll !== null ? setToll : 0, payMethod, routeLabel, setCard, zoneName, setTip);
 
-  return noMatch(overnight, `No listed price for this route. Quote it by hand, or $${HOURLY_RATE}/hr (no minimum) if it isn't a straight A-to-B trip.${overnightNote}`, zoneName);
+  return noMatch(overnight, `No listed price for this route. Quote it by hand, or $${hourlyRateFor(vehicle)}/hr (no minimum) if it isn't a straight A-to-B trip.${overnightNote}`, zoneName);
 }
 
 // ---- DISCOUNTS ----
@@ -975,6 +1015,9 @@ module.exports = {
   DESTINATIONS,
   LOCAL_RANGE,
   HOURLY_RATE,
+  HOURLY_RATE_SUV,
+  HOURLY_RATE_SEDAN,
+  hourlyRateFor,
   HOURLY_MINIMUM_HOURS,
   SUV_FEE,
   SUV_FEE_NY,
