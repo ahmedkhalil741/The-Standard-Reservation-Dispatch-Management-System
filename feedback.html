@@ -84,12 +84,21 @@
   .gcopybtn:hover{border-color:var(--accent);color:var(--accent)}
   .gcopybtn.ok{border-color:var(--accent);color:var(--accent)}
   .gsteps{color:var(--dim);font-size:.86rem;margin:14px 0 0 !important}
-  /* Deliberately a line of text, not a button. A button here would compete
-     with the form and win, and then we would have the review but never hear
-     what actually happened on the ride. */
-  .gnow{font-size:.9rem;color:var(--dim);margin:0 0 26px !important;
-        border-left:2px solid var(--line);padding-left:12px}
-  .gnow a{color:var(--accent)}
+  /* VISIBLE, BUT NOT THE PRIMARY ACTION.
+     First attempt was a grey line under the heading and Ahmed was right that
+     nobody would see it - that is exactly the shape an eye skips. It is a
+     bordered tile now, in full-strength text, with an OUTLINED button.
+     Outlined, not filled: "Send it to Hany" at the foot of the form is the
+     filled accent button, and there should only ever be one of those on a
+     screen. This reads as the clear second option, which is what it is. */
+  .gnow{border:1px solid var(--line);border-radius:14px;padding:18px 20px;
+        margin:0 0 30px !important;background:rgba(255,255,255,.02)}
+  .gnow p{color:var(--ink) !important;font-size:1rem;line-height:1.5;margin:0 0 14px !important}
+  .gnow .sub{color:var(--dim) !important;font-size:.88rem;margin:0 0 14px !important}
+  .gnowbtn{display:inline-block;border:1px solid var(--accent);color:var(--accent);
+           text-decoration:none;font-weight:600;font-size:.95rem;padding:11px 20px;
+           border-radius:100px}
+  .gnowbtn:hover{background:var(--accent);color:#0B0A08}
   .done .back{margin-top:24px;font-size:.92rem}
   [hidden]{display:none !important}
 </style>
@@ -119,9 +128,13 @@
          Kept as a quiet line rather than a button on purpose - see the CSS.
          And it is shown to everybody before they have rated anything, which
          is the opposite of gating. -->
-    <p class="gnow">Short on time? A word on
-      <a href="https://maps.app.goo.gl/2P7pFtS8tCU8YZH46" target="_blank" rel="noopener">Google</a>
-      helps us more than anything &mdash; the form can wait.</p>
+    <div class="gnow">
+      <p>A word on Google helps us more than anything else.</p>
+      <p class="sub">Thirty seconds, and it&rsquo;s what lets other neighbours find us. The
+        questions below can wait &mdash; or do both.</p>
+      <a class="gnowbtn" href="https://maps.app.goo.gl/2P7pFtS8tCU8YZH46"
+         target="_blank" rel="noopener">Leave a Google review &rarr;</a>
+    </div>
 
     <div class="q">
       <label id="rateLabel">How did we do?</label>
