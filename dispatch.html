@@ -846,7 +846,7 @@
     }catch(e){ /* no autocomplete is worse than none of the page */ }
   }
 
-  const BUILD = '8 Nov 2026, hourly is $85 Suburban / $75 Tesla';
+  const BUILD = '8 Nov 2026, the dispatch says why the $10 is missing';
   (async function checkBuild(){
     try {
       const res = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -3005,6 +3005,20 @@
           if(j.label) bits.push(j.label);
           if(j.discount) bits.push('<span class="tip">$' + j.discount + ' came off the fare' +
             (j.discountUnused ? ' \u2014 ' + j.discountNote : '') + '</span>');
+          // ---- WHY THE $10 IS NOT THERE ----
+          //
+          // A new customer whose discount silently did not apply is what sent
+          // Ahmed looking through the sheet on 8 November. The server now says
+          // which of the four reasons it was, and it gets said here, next to
+          // the price he is about to read down the phone.
+          if(!j.discount && j.firstRideWhyNot)
+            bits.push('<span class="tip" style="color:#E8998A">' + esc(j.firstRideWhyNot) + '</span>');
+          // And the other silent one: a local town-to-town trip prices as a
+          // RANGE, and a discount cannot come off a range, so it is dropped.
+          // The note explaining that already existed and was only ever shown
+          // when some of the discount was left over - never in this case.
+          if(!j.discount && j.discountNote)
+            bits.push('<span class="tip" style="color:#E8998A">' + esc(j.discountNote) + '</span>');
           if(rt){
             if(rt.matched && rt.outboundFare !== null && rt.returnFare !== null){
               bits.push('<span class="tip">One ride, there and back \u2014 $' + rt.outboundFare +

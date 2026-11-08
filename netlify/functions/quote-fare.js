@@ -14,7 +14,7 @@
 
 const { roundTripFare, isOvernightPickup, hourlyRateFor } = require('./_fare-calc');
 const { FIRST_RIDE_CREDIT } = require('./_loyalty');
-const { firstRideAvailable } = require('./_first-ride');
+const { firstRideAvailable, firstRideWhyNot } = require('./_first-ride');
 
 // Hours are an input to the price, not a correction of one, so they travel
 // alongside the overrides rather than inside the caller's object.
@@ -67,7 +67,12 @@ exports.handler = async function (event) {
     // The flag is still accepted as a fallback for when no phone has been typed
     // in yet.
     const asked = withStops(withHours(overrides, hours), stops);
-    const earned = phone ? await firstRideAvailable(phone) : Boolean(firstRide);
+    // WHY the ten did or did not come off, in words. A bare true/false here is
+    // what made a missing discount a mystery on 8 November - the page drew a
+    // price with no discount and nothing said why. One extra sheet read, and
+    // only when a phone has been typed in.
+    const whyNot = phone ? await firstRideWhyNot(phone) : null;
+    const earned = phone ? (whyNot === null) : Boolean(firstRide);
     const withCredit = (earned && !asked.discount)
       ? Object.assign({}, asked, { discount: FIRST_RIDE_CREDIT })
       : asked;
@@ -145,6 +150,8 @@ exports.handler = async function (event) {
         agreedFare: fare.agreedFare ?? null,
         discount: fare.discountApplied || 0,
         firstRideOff: (earned && !asked.discount) ? (fare.discountApplied || 0) : 0,
+        // Null when the $10 applied, or when no phone has been typed yet.
+        firstRideWhyNot: (phone && !asked.discount) ? whyNot : null,
         // Asked for more than the fare could take — the rest stays on their
         // balance, and the page says so rather than quietly swallowing it.
         discountUnused: fare.discountUnused || 0,

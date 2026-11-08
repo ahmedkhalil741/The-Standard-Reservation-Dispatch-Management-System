@@ -48,6 +48,50 @@ const tenDigits = (v) => String(v || '').replace(/\D/g, '').slice(-10);
 // ride" against it, so the second finds it and pays full price. Cancel the
 // first and the credit is free again, which is right - a ride that never
 // happened was never their first.
+// WHY IT DIDN'T COME OFF, in words, or null when it did.
+//
+// This exists because of a real booking on 8 November: a new customer, and the
+// $10 simply was not there in the sheet. Nothing anywhere said why. Every one
+// of the four reasons below returned a bare `false` and the dispatch drew a
+// price with no discount and no explanation - so the only way to find out was
+// to ask Claude and go through them one at a time.
+//
+// A silent no is the thing that cost the time, not the no itself.
+async function firstRideWhyNot(phone, existingSheets) {
+  const digits = tenDigits(phone);
+  if (digits.length !== 10) {
+    return 'no $10: the phone number is not ten digits, so this customer cannot be looked up';
+  }
+
+  try {
+    const sheets = existingSheets || (await sheetsClient());
+    const id = process.env.GOOGLE_SHEET_ID;
+
+    const { keys, rows } = await readTab(sheets, id, CUSTOMERS_TAB);
+    const them = rows
+      .map((r) => rowToObject(keys, r))
+      .find((c) => tenDigits(c.phone) === digits);
+    const done = them ? (parseInt(them.completed_rides, 10) || 0) : 0;
+    if (done > 0) {
+      return `no $10: this number already has ${done} completed ride${done === 1 ? '' : 's'} in the Customers tab, so they are not a new customer`;
+    }
+
+    const bookings = await readTab(sheets, id, BOOKINGS_TAB);
+    const already = bookings.rows
+      .map((r) => rowToObject(bookings.keys, r))
+      .find((b) => tenDigits(b.phone) === digits &&
+                   !/^(cancelled|no-?show)$/i.test(String(b.ride_status || '').trim()) &&
+                   /first ride/i.test(String(b.discount_reason || '')));
+    if (already) {
+      return 'no $10: an earlier booking for this number already took the first-ride discount';
+    }
+  } catch (err) {
+    return `no $10: the sheet could not be read (${err.message}) - full price is the safe wrong answer`;
+  }
+
+  return null;
+}
+
 async function firstRideAvailable(phone, existingSheets) {
   const digits = tenDigits(phone);
   if (digits.length !== 10) return false;
@@ -137,4 +181,4 @@ function payMethodFor(payMethod, saved) {
   return (saved && /^card$/i.test(String(payMethod || '').trim())) ? 'Card on file' : payMethod;
 }
 
-module.exports = { firstRideOff, firstRideAvailable, cardOnFile, payMethodFor, FIRST_RIDE_CREDIT };
+module.exports = { firstRideOff, firstRideAvailable, firstRideWhyNot, cardOnFile, payMethodFor, FIRST_RIDE_CREDIT };
