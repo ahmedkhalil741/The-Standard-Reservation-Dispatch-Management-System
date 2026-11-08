@@ -84,6 +84,12 @@
   .gcopybtn:hover{border-color:var(--accent);color:var(--accent)}
   .gcopybtn.ok{border-color:var(--accent);color:var(--accent)}
   .gsteps{color:var(--dim);font-size:.86rem;margin:14px 0 0 !important}
+  /* Deliberately a line of text, not a button. A button here would compete
+     with the form and win, and then we would have the review but never hear
+     what actually happened on the ride. */
+  .gnow{font-size:.9rem;color:var(--dim);margin:0 0 26px !important;
+        border-left:2px solid var(--line);padding-left:12px}
+  .gnow a{color:var(--accent)}
   .done .back{margin-top:24px;font-size:.92rem}
   [hidden]{display:none !important}
 </style>
@@ -100,6 +106,22 @@
     <h1>How was your ride?</h1>
     <p class="lede">Four questions, under a minute. It goes straight to Hany and
       it changes how we drive you next time.</p>
+    <!-- THE WAY OUT, OFFERED UP FRONT - Ahmed's point, 8 November: the Google
+         ask only appeared after Send, so anyone who did not finish the form
+         never saw it at all.
+         
+         A review is worth more to this business than a survey answer. Four
+         reviews is the thing keeping it out of search results; the survey is
+         useful but it is not what decides whether anyone finds us. So if
+         somebody is willing to do one of the two, it should be that one, and
+         they should not have to complete a form first to be told it exists.
+         
+         Kept as a quiet line rather than a button on purpose - see the CSS.
+         And it is shown to everybody before they have rated anything, which
+         is the opposite of gating. -->
+    <p class="gnow">Short on time? A word on
+      <a href="https://maps.app.goo.gl/2P7pFtS8tCU8YZH46" target="_blank" rel="noopener">Google</a>
+      helps us more than anything &mdash; the form can wait.</p>
 
     <div class="q">
       <label id="rateLabel">How did we do?</label>
