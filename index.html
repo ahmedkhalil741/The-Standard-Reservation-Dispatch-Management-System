@@ -33,8 +33,20 @@
      saying "we are a good car service" is a claim. sameAs is what lets
      a machine join this site to the Google, Yelp, Facebook and
      Nextdoor pages that carry the REVIEWS - other people's words,
-     which is the part that counts. Two of the four are still share
-     links; swap in the canonical addresses when they are to hand.
+     which is the part that counts.
+
+     The Google one is the ?cid= form rather than the long
+     /maps/place/... URL Ahmed copied out of his address bar. Two
+     reasons. It is stable - the place URL carries the map view and a
+     session token that change every time somebody opens it. And it
+     carries NO COORDINATES, which the place URL does, twice.
+
+     THAT SECOND REASON IS DELIBERATE AND SHOULD NOT BE UNDONE. This is
+     a service-area business run from a home address, and the address
+     is hidden on purpose on Google, Bing and Yelp - Bing had defaulted
+     to publishing it. Do not add a `geo` block to this schema, and do
+     not swap in a URL with a lat/long in it, however much more
+     complete it would look. The pin is not ours to publish.
 
      RULES FOR EDITING:
      - Every figure here must match _fare-calc.js and policy.html. A
@@ -61,9 +73,9 @@
   "logo": "https://standardnj.com/cover.png",
   "url": "https://standardnj.com",
   "sameAs": [
-    "https://share.google/JFGHdiYDGj0LGfIDp",
+    "https://maps.google.com/?cid=12908155373102461087",
     "https://www.yelp.com/biz/the-standard-private-car-service-new-providence",
-    "https://www.facebook.com/share/1CMuwPFUo8/",
+    "https://www.facebook.com/profile.php?id=61595337658955",
     "https://nextdoor.com/page/the-standard-private-car-service"
   ],
   "telephone": "+19086663777",
