@@ -298,6 +298,17 @@ const TOWN_FARES = [
   { town: 'Summit',           names: ['summit'],                                 ewr: 75,  manh: 135, lgajfk: 185 },
   { town: 'Trenton',          names: ['trenton'],                                ewr: 160, manh: 220, lgajfk: 270 },
   { town: 'Toms River',       names: ['toms river'],                             ewr: 175, manh: 235, lgajfk: 285 },
+  // Settled 10 October at the SAME rate as Union, because it is the same
+  // drive - it went onto the printed cards that week and was never added
+  // here, so the website refused to price a town the cards quote. Linden
+  // and Rahway are the same stretch and will be asked for next.
+  //
+  // KNOWN SIDE EFFECT: 'Roselle Park, NJ' now matches this row, because the
+  // qualifier guard in findTown only looks at the word IN FRONT. Roselle
+  // Park is its own borough but it is next door and the same drive to every
+  // destination on the card, so $75/$135/$185 is the right answer rather than
+  // a lucky one. Give it a row of its own the day the two prices differ.
+  { town: 'Roselle',          names: ['roselle'],                                ewr: 75,  manh: 135, lgajfk: 185 },
   { town: 'Union',            names: ['union'],                                  ewr: 75,  manh: 135, lgajfk: 185 },
   { town: 'Warren',           names: ['warren'],                                 ewr: 95,  manh: 155, lgajfk: 205 },
   { town: 'Watchung',         names: ['watchung'],                               ewr: 90,  manh: 150, lgajfk: 200 },
