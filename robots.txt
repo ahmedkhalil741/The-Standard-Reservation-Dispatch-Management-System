@@ -5,8 +5,34 @@
 # The feedback page is private for a different reason: it is a form a customer
 # reaches from a link in their own message, with their phone number already in
 # it. Nothing good comes of it turning up in a search result.
+#
+# None of this is security. robots.txt is a request that well-behaved crawlers
+# honour; a crawler that ignores it is not stopped by anything here. The real
+# control is server-side: the dispatch and the admin page check ADMIN_TOKEN
+# before they return any customer data, and the Netlify functions behind them
+# do the same. Treat the lines below as housekeeping, not as a lock.
 
 User-agent: *
+Disallow: /dispatch.html
+Disallow: /admin-booking.html
+Disallow: /feedback.html
+Disallow: /feedback
+
+# OAI-SearchBot is the crawler ChatGPT uses to fetch pages when somebody asks
+# it a question. It is already allowed by the group above, so this group does
+# not unlock anything today - it is here so the permission stays explicit if
+# the `*` group is ever tightened.
+#
+# The four Disallow lines are repeated on purpose. A crawler matches exactly
+# ONE group in robots.txt - the most specific one that names it - and ignores
+# every other group. So the moment OAI-SearchBot has a group of its own, the
+# `*` group above stops applying to it. Without these four lines this block
+# would quietly open the dispatch, the admin page and the feedback form to the
+# one crawler we just wrote a rule for. If you add another named crawler
+# below, copy the Disallow lines into it too.
+
+User-agent: OAI-SearchBot
+Allow: /
 Disallow: /dispatch.html
 Disallow: /admin-booking.html
 Disallow: /feedback.html
